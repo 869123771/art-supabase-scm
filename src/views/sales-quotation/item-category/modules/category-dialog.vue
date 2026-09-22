@@ -30,7 +30,6 @@
           <ElButton
             type="primary"
             plain
-            size="small"
             :disabled="!form.tenantId || !availableExpenses.length || form.feeItems.length >= 30"
             @click="addFee"
           >

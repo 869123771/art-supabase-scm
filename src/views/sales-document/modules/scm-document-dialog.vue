@@ -49,7 +49,6 @@
               <ElButton
                 type="primary"
                 plain
-                size="small"
                 :disabled="!header.tenantId || config.sourceRequired"
                 @click="addLine"
               >
@@ -61,15 +60,25 @@
               <div
                 v-for="(line, index) in lines"
                 :key="line.lineId"
-                class="min-w-0 rounded-lg border border-[var(--el-border-color-light)] p-4"
+                class="min-w-0 rounded-xl border border-[var(--el-border-color-light)] bg-[var(--el-fill-color-extra-light)] p-4"
               >
                 <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <strong class="text-sm"
-                    >第 {{ index + 1 }} 行 · {{ line.materialDescription || '新物料' }}</strong
-                  >
-                  <ElButton type="danger" text size="small" @click="lines.splice(index, 1)"
-                    >移除</ElButton
-                  >
+                  <div class="flex min-w-0 items-start gap-3">
+                    <span
+                      class="flex size-7 shrink-0 items-center justify-center rounded-md bg-[var(--el-color-primary-light-9)] text-xs font-semibold text-[var(--el-color-primary)]"
+                      >{{ index + 1 }}</span
+                    >
+                    <div class="min-w-0">
+                      <strong class="block break-words text-sm">{{
+                        line.materialDescription || '新物料'
+                      }}</strong>
+                      <span class="mt-1 block break-words text-xs text-[var(--art-gray-600)]"
+                        >{{ line.materialCode || '请选择物料'
+                        }}<span v-if="line.specification"> · {{ line.specification }}</span></span
+                      >
+                    </div>
+                  </div>
+                  <ElButton type="danger" text @click="lines.splice(index, 1)">移除</ElButton>
                 </div>
                 <div class="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]">
@@ -291,13 +300,7 @@
             empty-description="可从当前租户的报价费用清单添加。"
           >
             <template #actions>
-              <ElButton
-                type="primary"
-                plain
-                size="small"
-                :disabled="!expenseOptions.length"
-                @click="addFee"
-              >
+              <ElButton type="primary" plain :disabled="!expenseOptions.length" @click="addFee">
                 <ArtSvgIcon icon="ri:add-line" />
                 添加费用
               </ElButton>
@@ -357,7 +360,7 @@
             empty-description="添加计划后可记录每期应收。"
           >
             <template #actions>
-              <ElButton type="primary" plain size="small" @click="addPaymentPlan">
+              <ElButton type="primary" plain @click="addPaymentPlan">
                 <ArtSvgIcon icon="ri:add-line" />
                 添加计划
               </ElButton>
@@ -434,7 +437,7 @@
             empty-description="添加计划后可安排交付日期与数量。"
           >
             <template #actions>
-              <ElButton type="primary" plain size="small" @click="addDeliveryPlan">
+              <ElButton type="primary" plain @click="addDeliveryPlan">
                 <ArtSvgIcon icon="ri:add-line" />
                 添加计划
               </ElButton>
@@ -506,7 +509,7 @@
             empty-description="添加条款后可填写标题与正文。"
           >
             <template #actions>
-              <ElButton type="primary" plain size="small" @click="addClause">
+              <ElButton type="primary" plain @click="addClause">
                 <ArtSvgIcon icon="ri:add-line" />
                 添加条款
               </ElButton>
@@ -519,9 +522,7 @@
               >
                 <div class="mb-2 flex items-center justify-between">
                   <strong class="text-sm">第 {{ index + 1 }} 条</strong>
-                  <ElButton type="danger" text size="small" @click="clauses.splice(index, 1)"
-                    >移除</ElButton
-                  >
+                  <ElButton type="danger" text @click="clauses.splice(index, 1)">移除</ElButton>
                 </div>
                 <div class="flex min-w-0 flex-col gap-2">
                   <ElInput v-model="clause.title" maxlength="120" placeholder="条款标题" />
@@ -770,13 +771,17 @@
             span: 12,
             props: {
               options: sourceOptions.value.map((item) => ({
-                label: `${item.documentNo} · ${item.project?.projectName || item.status}`,
+                label: `${item.documentNo} · ${projectOptions.value.find((project) => project.id === item.projectId)?.projectName || '未关联项目'}`,
                 value: item.id
               })),
               filterable: true,
               clearable: !config.value.sourceRequired,
               loading: referencesLoading.value,
               disabled: !header.tenantId,
+              noDataText:
+                config.value.sourceKind === 'sales_order'
+                  ? '当前租户暂无已审核或履约中的销售订单'
+                  : '当前租户暂无可用来源单据，请核对租户和单据状态',
               placeholder: config.value.sourceRequired ? '请选择来源单据' : '可从已存在的单据带入'
             }
           } as FormItem

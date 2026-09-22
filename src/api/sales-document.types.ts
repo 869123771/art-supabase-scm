@@ -203,11 +203,13 @@ export interface ScmMaterialOption {
   materialDescription: string
   specification?: string | null
   unit?: string | null
+  materialSource?: string | null
 }
 
 export interface ScmDocumentTypeOption {
   id: string
   tenantId: string
+  menuId?: string | null
   documentTypeCode: string
   documentTypeName: string
 }

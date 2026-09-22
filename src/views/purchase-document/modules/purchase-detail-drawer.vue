@@ -5,26 +5,23 @@
         :icon="config.icon"
         :eyebrow="config.eyebrow"
         :title="record.documentNo"
-        :description="`${record.project?.projectName || '未命名项目'} · ${record.customer?.customerName || '未命名客户'}`"
+        :description="`${record.project?.projectName || '未命名项目'} · ${record.supplier?.supplierName || '未指定供应商'}`"
       >
-        <template #aside>
-          <div class="text-right">
-            <div class="text-xs text-[var(--art-gray-600)]">单据总价</div>
+        <template #aside
+          ><div class="text-right"
+            ><div class="text-xs text-[var(--art-gray-600)]">价税合计</div>
             <strong class="text-lg text-[var(--el-color-primary)]">{{
               formatCurrencyValue(record.totalAmount)
-            }}</strong>
-          </div>
-        </template>
+            }}</strong></div
+          ></template
+        >
       </ArtEntitySummary>
-
-      <ArtSectionCard title="单据信息" subtitle="项目、客户与状态均以当前单据为准。">
+      <ArtSectionCard title="单据信息" subtitle="单据归属、日期与当前状态。">
         <ArtDescriptions :data="record" :items="headerItems" :columns="2" />
       </ArtSectionCard>
-
       <ArtSectionCard v-if="config.fields.length" title="业务信息">
         <ArtDescriptions :data="record" :items="detailItems" :columns="2" />
       </ArtSectionCard>
-
       <ArtSectionCard title="物料明细" :empty="!record.lines.length" empty-title="暂无明细">
         <div class="divide-y divide-[var(--el-border-color-lighter)]">
           <div
@@ -46,6 +43,34 @@
                     >{{ line.materialCode || '无物料编码'
                     }}<span v-if="line.specification"> · {{ line.specification }}</span></div
                   >
+                  <div
+                    v-if="line.sourceDocumentNo"
+                    class="mt-1 break-words text-xs text-[var(--art-gray-600)]"
+                    >来源 {{ line.sourceDocumentNo }}</div
+                  >
+                  <div
+                    v-if="record.kind === 'purchase_request'"
+                    class="mt-1 text-xs text-[var(--art-gray-600)]"
+                  >
+                    已采购 {{ line.purchasedQuantity ?? 0 }} · 未采购
+                    {{ line.remainingQuantity ?? line.quantity }}
+                  </div>
+                  <div
+                    v-if="record.kind === 'purchase_order'"
+                    class="mt-1 text-xs text-[var(--art-gray-600)]"
+                  >
+                    已收料 {{ line.receivedQuantity ?? 0 }} · 待收料
+                    {{ line.remainingQuantity ?? line.quantity }}
+                  </div>
+                  <div
+                    v-if="line.batchNo || line.serialNumbers?.length"
+                    class="mt-1 break-all text-xs text-[var(--art-gray-600)]"
+                  >
+                    <span v-if="line.batchNo">批号 {{ line.batchNo }}</span>
+                    <span v-if="line.serialNumbers?.length">
+                      · 序列号 {{ line.serialNumbers.join('、') }}</span
+                    >
+                  </div>
                 </div>
               </div>
               <div
@@ -54,7 +79,7 @@
                 <div
                   ><div class="text-xs text-[var(--art-gray-600)]">数量</div
                   ><div class="mt-1 font-medium tabular-nums"
-                    >{{ line.quantity }} {{ line.salesUnit }}</div
+                    >{{ line.quantity }} {{ line.unit }}</div
                   ></div
                 >
                 <div
@@ -64,10 +89,13 @@
                   }}</div></div
                 >
                 <div
-                  ><div class="text-xs text-[var(--art-gray-600)]">金额</div
+                  ><div class="text-xs text-[var(--art-gray-600)]">价税合计</div
                   ><div class="mt-1 font-semibold tabular-nums text-[var(--art-gray-900)]">{{
                     formatCurrencyValue(
-                      line.quantity * line.unitPrice * (1 - (line.discountRate || 0) / 100)
+                      line.quantity *
+                        line.unitPrice *
+                        (1 - line.discountRate / 100) *
+                        (1 + line.taxRate / 100)
                     )
                   }}</div></div
                 >
@@ -76,40 +104,33 @@
           </div>
         </div>
       </ArtSectionCard>
-
-      <ArtSectionCard v-if="record.fees.length" title="费用明细">
-        <div
-          v-for="fee in record.fees"
-          :key="fee.expenseId"
-          class="flex justify-between gap-3 border-b border-[var(--el-border-color-lighter)] py-2 text-sm last:border-0"
-        >
-          <span>{{ feeNames.get(fee.expenseId) || fee.expenseId }}</span
-          ><strong>{{ formatCurrencyValue(fee.amount) }}</strong>
-        </div>
-      </ArtSectionCard>
-
-      <ArtSectionCard v-if="record.paymentPlans.length" title="收款计划">
+      <ArtSectionCard v-if="record.paymentPlans.length" title="付款计划">
         <div
           v-for="plan in record.paymentPlans"
           :key="plan.id"
           class="flex flex-wrap justify-between gap-3 border-b border-[var(--el-border-color-lighter)] py-2 text-sm last:border-0"
         >
-          <span>{{ plan.dueDate }} · {{ plan.isAdvance ? '预收' : '应收' }}</span
-          ><strong>{{ plan.ratio }}% · {{ formatCurrencyValue(plan.amount) }}</strong>
-        </div>
+          <span>{{ plan.dueDate }} · {{ plan.isAdvance ? '预付' : '应付' }}</span>
+          <strong>{{ plan.ratio }}% · {{ formatCurrencyValue(plan.amount) }}</strong></div
+        >
       </ArtSectionCard>
-
-      <ArtSectionCard v-if="record.deliveryPlans.length" title="发货计划">
+      <ArtSectionCard v-if="record.deliveryPlans.length" title="交货计划">
         <div
           v-for="plan in record.deliveryPlans"
           :key="plan.id"
           class="border-b border-[var(--el-border-color-lighter)] py-2 text-sm last:border-0"
         >
-          <strong>{{ plan.plannedDate }} · {{ plan.quantity }}</strong
-          ><div class="text-[var(--art-gray-600)]">{{ plan.location }} {{ plan.address }}</div>
-        </div>
+          <strong>{{ plan.plannedDate }} · 计划 {{ plan.quantity }}</strong>
+          <div class="mt-1 text-[var(--art-gray-600)]">
+            基本数量 {{ plan.plannedBaseQuantity ?? plan.quantity }} · 已交货
+            {{ plan.deliveredQuantity }} · 未交货 {{ plan.remainingQuantity ?? plan.quantity }}
+          </div>
+          <div v-if="plan.recentDeliveryDate" class="mt-1 text-[var(--art-gray-600)]">
+            最近交货 {{ plan.recentDeliveryDate }}
+          </div>
+          <div class="text-[var(--art-gray-600)]">{{ plan.location }} {{ plan.address }}</div></div
+        >
       </ArtSectionCard>
-
       <ArtSectionCard v-if="record.clauses.length" title="合同条款">
         <div
           v-for="clause in record.clauses"
@@ -117,38 +138,29 @@
           class="border-b border-[var(--el-border-color-lighter)] py-2 text-sm last:border-0"
         >
           <strong>{{ clause.title }}</strong
-          ><p class="mt-1 whitespace-pre-wrap text-[var(--art-gray-600)]">{{ clause.content }}</p>
-        </div>
+          ><p class="mt-1 whitespace-pre-wrap text-[var(--art-gray-600)]">{{
+            clause.content
+          }}</p></div
+        >
       </ArtSectionCard>
-
-      <ArtSectionCard title="金额汇总">
-        <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+      <ArtSectionCard title="金额汇总"
+        ><div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
           <div
             ><span class="text-[var(--art-gray-600)]">货品金额</span
             ><strong class="block">{{ formatCurrencyValue(record.subtotal) }}</strong></div
-          >
-          <div
-            ><span class="text-[var(--art-gray-600)]">费用合计</span
-            ><strong class="block">{{ formatCurrencyValue(record.feeTotal) }}</strong></div
           >
           <div
             ><span class="text-[var(--art-gray-600)]">税金</span
             ><strong class="block">{{ formatCurrencyValue(record.taxAmount) }}</strong></div
           >
           <div
-            ><span class="text-[var(--art-gray-600)]">成本</span
-            ><strong class="block">{{ formatCurrencyValue(record.costTotal) }}</strong></div
+            ><span class="text-[var(--art-gray-600)]">价税合计</span
+            ><strong class="block text-[var(--el-color-primary)]">{{
+              formatCurrencyValue(record.totalAmount)
+            }}</strong></div
           >
-          <div
-            ><span class="text-[var(--art-gray-600)]">毛利</span
-            ><strong class="block">{{ formatCurrencyValue(record.grossProfit) }}</strong></div
-          >
-          <div
-            ><span class="text-[var(--art-gray-600)]">毛利率</span
-            ><strong class="block">{{ record.grossMargin }}%</strong></div
-          >
-        </div>
-      </ArtSectionCard>
+        </div></ArtSectionCard
+      >
     </div>
   </ArtDrawer>
 </template>
@@ -163,89 +175,93 @@
   import { formatCurrencyValue } from '@/utils/ui/format'
   import { useUserStore } from '@/store/modules/user'
   import { storeToRefs } from 'pinia'
-  import { fetchQuoteExpenses, fetchScmSalesDocument, type ScmSalesDocument } from '@scm/api'
-  import { scmDocumentConfigs } from '../document-config'
+  import { fetchScmPurchaseDocument, type ScmPurchaseDocument } from '@scm/api'
+  import { purchaseConfigs } from '../purchase-config'
 
-  defineOptions({ name: 'ScmDocumentDetailDrawer' })
-
-  const drawerRef = ref<ArtDrawerExpose<ScmSalesDocument>>()
-  const record = ref<ScmSalesDocument>({
+  defineOptions({ name: 'ScmPurchaseDetailDrawer' })
+  const drawerRef = ref<ArtDrawerExpose<ScmPurchaseDocument>>()
+  const record = ref<ScmPurchaseDocument>({
     id: '',
     tenantId: '',
-    kind: 'sales_quotation',
+    kind: 'purchase_contract',
     documentNo: '',
     documentTypeId: null,
     projectId: null,
-    customerId: null,
+    supplierId: null,
     sourceId: null,
     status: 'draft',
     documentDate: '',
     deliveryDate: null,
-    currency: 'CNY',
     details: {},
     lines: [],
-    fees: [],
     paymentPlans: [],
     deliveryPlans: [],
     clauses: [],
     subtotal: 0,
-    feeTotal: 0,
     taxAmount: 0,
-    costTotal: 0,
     totalAmount: 0,
-    grossProfit: 0,
-    grossMargin: 0,
     remark: null,
     createdAt: '',
     updatedAt: ''
   })
-  const config = computed(() => scmDocumentConfigs[record.value.kind])
+  const config = computed(() => purchaseConfigs[record.value.kind])
   const { getDictMap } = storeToRefs(useUserStore())
-  const feeNames = ref(new Map<string, string>())
-
-  const headerItems: ArtDescriptionItem<ScmSalesDocument>[] = [
+  const headerItems: ArtDescriptionItem<ScmPurchaseDocument>[] = [
     { key: 'documentNo', label: '单据编号', field: 'documentNo' },
     {
       key: 'status',
       label: '单据状态',
-      value: (row: ScmSalesDocument) =>
-        getDictMap.value?.scmDocumentStatus?.find((item) => item.value === row.status)?.label ||
+      value: (row: ScmPurchaseDocument) =>
+        getDictMap.value?.scmPurchaseStatus?.find((item) => item.value === row.status)?.label ||
         row.status
     },
     {
       key: 'projectName',
       label: '项目名称',
-      value: (row: ScmSalesDocument) => row.project?.projectName || '--'
+      value: (row: ScmPurchaseDocument) => row.project?.projectName || '--'
     },
     {
-      key: 'customerName',
-      label: '客户全称',
-      value: (row: ScmSalesDocument) => row.customer?.customerName || '--'
+      key: 'projectCode',
+      label: '项目编码',
+      value: (row: ScmPurchaseDocument) => row.project?.projectCode || '--'
+    },
+    {
+      key: 'supplierName',
+      label: '供应商全称',
+      value: (row: ScmPurchaseDocument) => row.supplier?.supplierName || '--'
     },
     {
       key: 'sourceNo',
       label: '来源单据',
-      value: (row: ScmSalesDocument) => row.source?.documentNo || '--'
+      value: (row: ScmPurchaseDocument) => row.source?.documentNo || '--'
     },
     { key: 'documentDate', label: '单据日期', field: 'documentDate' },
     {
       key: 'deliveryDate',
       label: '交货日期',
-      value: (row: ScmSalesDocument) => row.deliveryDate || '--'
+      value: (row: ScmPurchaseDocument) => row.deliveryDate || '--'
     },
-    { key: 'currency', label: '币种', field: 'currency' },
-    { key: 'remark', label: '备注', value: (row: ScmSalesDocument) => row.remark || '--', span: 2 }
+    {
+      key: 'remark',
+      label: '备注',
+      value: (row: ScmPurchaseDocument) => row.remark || '--',
+      span: 2
+    }
   ]
-  const detailItems = computed<ArtDescriptionItem<ScmSalesDocument>[]>(() =>
+  const detailItems = computed<ArtDescriptionItem<ScmPurchaseDocument>[]>(() =>
     config.value.fields.map((field) => ({
       key: field.key,
       label: field.label,
-      value: (row: ScmSalesDocument) => String(row.details[field.key] ?? '--'),
+      value: (row: ScmPurchaseDocument) =>
+        String(
+          row.details[`${field.key}Name` as keyof typeof row.details] ??
+            row.details[field.key] ??
+            '--'
+        ),
       span: field.span === 24 ? 2 : 1
     }))
   )
-
-  async function handleOpen(value: ScmSalesDocument): Promise<void> {
+  async function handleOpen(value: ScmPurchaseDocument) {
     record.value = value
     await drawerRef.value?.handleOpen(value, {
       title: `查看${config.value.title}`,
@@ -255,13 +271,8 @@
       scrollbarAlways: true,
       showFooter: false
     })
-    const [detail, expenses] = await Promise.all([
-      fetchScmSalesDocument(value.id),
-      value.fees.length ? fetchQuoteExpenses({ tenantId: value.tenantId }) : Promise.resolve(null)
-    ])
-    if (detail.data) record.value = detail.data
-    feeNames.value = new Map((expenses?.data ?? []).map((item) => [item.id, item.expenseName]))
+    const { data } = await fetchScmPurchaseDocument(value.id)
+    if (data) record.value = data
   }
-
   defineExpose({ handleOpen })
 </script>

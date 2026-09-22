@@ -221,7 +221,9 @@ export async function fetchScmCustomerOptions(tenantId?: string, keyword?: strin
 export async function fetchScmMaterialOptions(tenantId?: string) {
   let request = supabase
     .from('mdm_material')
-    .select('id,tenant_id,material_code,material_name,description,specification_model,basic_unit')
+    .select(
+      'id,tenant_id,material_code,material_name,description,specification_model,basic_unit,material_source'
+    )
     .order('material_name')
     .range(0, 999)
   if (tenantId) request = request.eq('tenant_id', tenantId)
@@ -234,6 +236,7 @@ export async function fetchScmMaterialOptions(tenantId?: string) {
       description: string | null
       specificationModel: string | null
       basicUnit: string | null
+      materialSource: string | null
     }>
   >(() => request, {
     breakReturn: true,
@@ -246,7 +249,8 @@ export async function fetchScmMaterialOptions(tenantId?: string) {
     materialCode: row.materialCode,
     materialDescription: row.description || row.materialName,
     specification: row.specificationModel,
-    unit: row.basicUnit
+    unit: row.basicUnit,
+    materialSource: row.materialSource
   }))
   return { ...response, data }
 }
@@ -254,7 +258,7 @@ export async function fetchScmMaterialOptions(tenantId?: string) {
 export async function fetchScmDocumentTypeOptions(tenantId?: string) {
   let request = supabase
     .from('mdm_document_type')
-    .select('id,tenant_id,document_type_code,document_type_name')
+    .select('id,tenant_id,menu_id,document_type_code,document_type_name')
     .eq('enabled', true)
     .order('sort_order')
     .range(0, 999)

@@ -1,1 +1,0 @@
-import{Cn as e,cr as t,fn as n}from"./useApi-s_02lHjl-neRNQfbk.js";import{t as r}from"./scm-document-workspace-DIIkyW6Z.js";var i=e({name:`ScmLoading`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`loading`}))}});export{i as default};
