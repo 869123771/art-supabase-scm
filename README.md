@@ -1,39 +1,17 @@
-# art-supabase-scm
+# Art Supabase SCM · 供应链管理
 
-#### 介绍
-{**以下是 Gitee 平台说明，您可以替换此简介**
-Gitee 是 OSCHINA 推出的基于 Git 的代码托管平台（同时支持 SVN）。专为开发者提供稳定、高效、安全的云端软件开发协作平台
-无论是个人、团队、或是企业，都能够用 Gitee 实现代码托管、项目管理、协作开发。企业项目请看 [https://gitee.com/enterprises](https://gitee.com/enterprises)}
+本仓是 [Art Supabase Pro](https://gitee.com/wangyanghub/art-supabase-pro) 的供应链管理（SCM）业务子仓，位于主仓的 `modules/art-supabase-scm`，通过 Git submodule 独立维护。
 
-#### 软件架构
-软件架构说明
+## 职责边界
 
+SCM 负责供应链领域的业务页面、API、类型和规则。认证、租户、菜单、权限、布局、公共组件及 Supabase 公共客户端由主平台统一提供。业务功能上线时，应沿用现有子应用的独立运行和平台宿主接入方式，并在服务端落实租户与权限校验。
 
-#### 安装教程
+当前仓库已完成 Git 子仓初始化；供应链业务功能尚未实现。请勿将占位内容当作可用业务数据。
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+## 与主仓协作
 
-#### 使用说明
+1. 在本仓提交供应链业务变更。
+2. 在主仓更新 `modules/art-supabase-scm` 的子模块指针。
+3. 主仓克隆时使用 `git clone --recurse-submodules`，已有工作区使用 `git submodule update --init --recursive`。
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
-
-
-#### 特技
-
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+远端仓库：[art-supabase-scm](https://gitee.com/wangyanghub/art-supabase-scm)。
