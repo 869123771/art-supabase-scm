@@ -598,7 +598,12 @@
     )
   }
 
-  onMounted(() => void tenantScopeStore.loadTenantOptions())
+  onMounted(() => {
+    void tenantScopeStore.loadTenantOptions()
+    void userStore
+      .ensureDictLoaded('scmDocumentStatus')
+      .catch(() => ElMessage.warning('单据状态加载失败，请刷新页面重试'))
+  })
   watch(effectiveTenantId, (tenantId) => {
     if (tenantId) search.value.tenantId = undefined
   })

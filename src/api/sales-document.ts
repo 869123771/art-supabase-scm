@@ -16,6 +16,31 @@ export * from './sales-document.types'
 
 const { supabase, responseHandle, keysToSnakeDeep } = useSupabase()
 
+const documentSelect =
+  '*,project:mdm_project!scm_sales_document_project_id_fkey(project_code,project_name,customer_id),customer:mdm_customer!scm_sales_document_customer_id_fkey(customer_code,customer_name),document_type:mdm_document_type!scm_sales_document_document_type_id_fkey(document_type_code,document_type_name)'
+
+async function withSourceDocuments(documents: ScmSalesDocument[]): Promise<ScmSalesDocument[]> {
+  const sourceIds = [
+    ...new Set(documents.flatMap((document) => (document.sourceId ? [document.sourceId] : [])))
+  ]
+  if (!sourceIds.length) return documents
+
+  const { data } = await responseHandle<
+    Array<Pick<ScmSalesDocument, 'id' | 'documentNo' | 'kind' | 'status'>>
+  >(
+    () =>
+      supabase.from('scm_sales_document').select('id,document_no,kind,status').in('id', sourceIds),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '来源单据加载失败，请稍后重试' }
+  )
+  const sources = new Map(
+    (data ?? []).map(({ id, documentNo, kind, status }) => [id, { documentNo, kind, status }])
+  )
+  return documents.map((document) => ({
+    ...document,
+    source: document.sourceId ? (sources.get(document.sourceId) ?? null) : null
+  }))
+}
+
 export async function fetchScmSalesDocuments(
   kind: ScmDocumentKind,
   query: ScmSalesDocumentQuery = {}
@@ -23,10 +48,7 @@ export async function fetchScmSalesDocuments(
   const { keyword, status, tenantId, projectId, from = 0, to = 999 } = query
   let request = supabase
     .from('scm_sales_document')
-    .select(
-      '*,project:mdm_project!scm_sales_document_project_id_fkey(project_code,project_name,customer_id),customer:mdm_customer!scm_sales_document_customer_id_fkey(customer_code,customer_name),document_type:mdm_document_type!scm_sales_document_document_type_id_fkey(document_type_code,document_type_name),source:scm_sales_document!scm_sales_document_source_id_fkey(document_no,kind,status)',
-      { count: 'exact' }
-    )
+    .select(documentSelect, { count: 'exact' })
     .eq('kind', kind)
     .order('updated_at', { ascending: false })
     .range(from, to)
@@ -42,24 +64,21 @@ export async function fetchScmSalesDocuments(
   if (status) request = request.eq('status', status)
   if (tenantId) request = request.eq('tenant_id', tenantId)
   if (projectId) request = request.eq('project_id', projectId)
-  return responseHandle<ScmSalesDocument[]>(() => request, {
+  const result = await responseHandle<ScmSalesDocument[]>(() => request, {
     showErrorMessage: true,
     errorMessage: '单据列表加载失败，请稍后重试'
   })
+  if (result.data?.length) result.data = await withSourceDocuments(result.data)
+  return result
 }
 
 export async function fetchScmSalesDocument(id: string) {
-  return responseHandle<ScmSalesDocument>(
-    () =>
-      supabase
-        .from('scm_sales_document')
-        .select(
-          '*,project:mdm_project!scm_sales_document_project_id_fkey(project_code,project_name,customer_id),customer:mdm_customer!scm_sales_document_customer_id_fkey(customer_code,customer_name),document_type:mdm_document_type!scm_sales_document_document_type_id_fkey(document_type_code,document_type_name),source:scm_sales_document!scm_sales_document_source_id_fkey(document_no,kind,status)'
-        )
-        .eq('id', id)
-        .single(),
+  const result = await responseHandle<ScmSalesDocument>(
+    () => supabase.from('scm_sales_document').select(documentSelect).eq('id', id).single(),
     { breakReturn: true, showErrorMessage: true, errorMessage: '单据详情加载失败，请稍后重试' }
   )
+  if (result.data) result.data = (await withSourceDocuments([result.data]))[0]
+  return result
 }
 
 function writePayload(input: ScmSalesDocumentWrite) {

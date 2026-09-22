@@ -224,6 +224,8 @@
       title: `查看${config.value.title}`,
       subtitle: '核对单据、明细及金额。',
       size: 'xl',
+      contentHeight: 'calc(100vh - 126px)',
+      scrollbarAlways: true,
       showFooter: false
     })
     const [detail, expenses] = await Promise.all([

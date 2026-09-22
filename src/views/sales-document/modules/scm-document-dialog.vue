@@ -38,7 +38,13 @@
 
       <ElTabs v-model="activeTab" class="min-w-0">
         <ElTabPane label="物料明细" name="lines">
-          <ArtSectionCard title="物料明细" subtitle="按单据维护物料、数量、价格、税率与成本。">
+          <ArtSectionCard
+            title="物料明细"
+            subtitle="按单据维护物料、数量、价格、税率与成本。"
+            :empty="!lines.length"
+            empty-title="暂无物料明细"
+            empty-description="添加明细后可计算单据金额。"
+          >
             <template #actions>
               <ElButton
                 type="primary"
@@ -47,13 +53,11 @@
                 :disabled="!header.tenantId || config.sourceRequired"
                 @click="addLine"
               >
+                <ArtSvgIcon icon="ri:add-line" />
                 添加明细
               </ElButton>
             </template>
-            <div v-if="!lines.length" class="py-6 text-center text-sm text-[var(--art-gray-600)]">
-              暂无物料明细，添加后可计算单据金额。
-            </div>
-            <div v-else class="flex flex-col gap-3">
+            <div class="flex flex-col gap-3">
               <div
                 v-for="(line, index) in lines"
                 :key="line.lineId"
@@ -279,7 +283,13 @@
         </ElTabPane>
 
         <ElTabPane v-if="config.useFees" label="费用明细" name="fees">
-          <ArtSectionCard title="费用明细" subtitle="费用定义来自当前租户的报价费用清单。">
+          <ArtSectionCard
+            title="费用明细"
+            subtitle="费用定义来自当前租户的报价费用清单。"
+            :empty="!fees.length"
+            empty-title="暂无费用明细"
+            empty-description="可从当前租户的报价费用清单添加。"
+          >
             <template #actions>
               <ElButton
                 type="primary"
@@ -288,13 +298,11 @@
                 :disabled="!expenseOptions.length"
                 @click="addFee"
               >
+                <ArtSvgIcon icon="ri:add-line" />
                 添加费用
               </ElButton>
             </template>
-            <div v-if="!fees.length" class="py-6 text-center text-sm text-[var(--art-gray-600)]">
-              暂无费用明细。
-            </div>
-            <div v-else class="flex flex-col gap-2">
+            <div class="flex flex-col gap-2">
               <div
                 v-for="(fee, index) in fees"
                 :key="index"
@@ -341,19 +349,20 @@
         </ElTabPane>
 
         <ElTabPane v-if="config.usePaymentPlans" label="收款计划" name="payments">
-          <ArtSectionCard title="收款计划" subtitle="选择按比例或按金额记录每期应收。">
+          <ArtSectionCard
+            title="收款计划"
+            subtitle="选择按比例或按金额记录每期应收。"
+            :empty="!paymentPlans.length"
+            empty-title="暂无收款计划"
+            empty-description="添加计划后可记录每期应收。"
+          >
             <template #actions>
-              <ElButton type="primary" plain size="small" @click="addPaymentPlan"
-                >添加计划</ElButton
-              >
+              <ElButton type="primary" plain size="small" @click="addPaymentPlan">
+                <ArtSvgIcon icon="ri:add-line" />
+                添加计划
+              </ElButton>
             </template>
-            <div
-              v-if="!paymentPlans.length"
-              class="py-6 text-center text-sm text-[var(--art-gray-600)]"
-            >
-              暂无收款计划。
-            </div>
-            <div v-else class="flex flex-col gap-3">
+            <div class="flex flex-col gap-3">
               <div
                 v-for="(plan, index) in paymentPlans"
                 :key="plan.id"
@@ -420,19 +429,17 @@
           <ArtSectionCard
             title="发货计划"
             subtitle="按要货日期与运输提前期维护计划发货日期和数量。"
+            :empty="!deliveryPlans.length"
+            empty-title="暂无发货计划"
+            empty-description="添加计划后可安排交付日期与数量。"
           >
             <template #actions>
-              <ElButton type="primary" plain size="small" @click="addDeliveryPlan"
-                >添加计划</ElButton
-              >
+              <ElButton type="primary" plain size="small" @click="addDeliveryPlan">
+                <ArtSvgIcon icon="ri:add-line" />
+                添加计划
+              </ElButton>
             </template>
-            <div
-              v-if="!deliveryPlans.length"
-              class="py-6 text-center text-sm text-[var(--art-gray-600)]"
-            >
-              暂无发货计划。
-            </div>
-            <div v-else class="flex flex-col gap-3">
+            <div class="flex flex-col gap-3">
               <div
                 v-for="(plan, index) in deliveryPlans"
                 :key="plan.id"
@@ -491,14 +498,20 @@
         </ElTabPane>
 
         <ElTabPane v-if="config.useClauses" label="合同条款" name="clauses">
-          <ArtSectionCard title="合同条款" subtitle="记录双方确认的条款标题与正文。">
+          <ArtSectionCard
+            title="合同条款"
+            subtitle="记录双方确认的条款标题与正文。"
+            :empty="!clauses.length"
+            empty-title="暂无合同条款"
+            empty-description="添加条款后可填写标题与正文。"
+          >
             <template #actions>
-              <ElButton type="primary" plain size="small" @click="addClause">添加条款</ElButton>
+              <ElButton type="primary" plain size="small" @click="addClause">
+                <ArtSvgIcon icon="ri:add-line" />
+                添加条款
+              </ElButton>
             </template>
-            <div v-if="!clauses.length" class="py-6 text-center text-sm text-[var(--art-gray-600)]">
-              暂无合同条款。
-            </div>
-            <div v-else class="flex flex-col gap-3">
+            <div class="flex flex-col gap-3">
               <div
                 v-for="(clause, index) in clauses"
                 :key="clause.id"
@@ -1047,6 +1060,16 @@
   }
 
   async function handleOpen(options: OpenOptions): Promise<void> {
+    try {
+      await Promise.all(
+        ['scmDiscountMode', 'scmPaymentPlanMode', 'scmTransportMode', 'mdmCurrency'].map((code) =>
+          userStore.ensureDictLoaded(code)
+        )
+      )
+    } catch {
+      ElMessage.warning('单据选项加载失败，请刷新页面重试')
+      return
+    }
     preparing = true
     kind.value = options.kind
     recordId.value = options.copy ? undefined : options.record?.id

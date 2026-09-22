@@ -17,7 +17,15 @@
         :show-submit="false"
       />
 
-      <ArtSectionCard title="附加费用" subtitle="费用定义来自当前租户；同一费用只能添加一次。">
+      <ArtSectionCard
+        title="附加费用"
+        subtitle="费用定义来自当前租户；同一费用只能添加一次。"
+        :empty="!form.tenantId || !form.feeItems.length"
+        :empty-title="form.tenantId ? '暂无附加费用' : '请先选择所属租户'"
+        :empty-description="
+          form.tenantId ? '可添加费用，也可直接保存报价项。' : '选择租户后可添加费用。'
+        "
+      >
         <template #actions>
           <ElButton
             type="primary"
@@ -26,19 +34,11 @@
             :disabled="!form.tenantId || !availableExpenses.length || form.feeItems.length >= 30"
             @click="addFee"
           >
+            <ArtSvgIcon icon="ri:add-line" />
             添加费用
           </ElButton>
         </template>
-        <div v-if="!form.tenantId" class="py-5 text-center text-sm text-[var(--art-gray-600)]">
-          请先选择所属租户。
-        </div>
-        <div
-          v-else-if="!form.feeItems.length"
-          class="py-5 text-center text-sm text-[var(--art-gray-600)]"
-        >
-          当前报价项没有附加费用，可直接保存。
-        </div>
-        <div v-else class="flex flex-col gap-2">
+        <div class="flex flex-col gap-2">
           <div
             v-for="(fee, index) in form.feeItems"
             :key="index"
