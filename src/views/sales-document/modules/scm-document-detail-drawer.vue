@@ -25,7 +25,17 @@
         <ArtDescriptions :data="record" :items="detailItems" :columns="2" />
       </ArtSectionCard>
 
-      <ArtSectionCard title="物料明细" :empty="!record.lines.length" empty-title="暂无明细">
+      <ArtSectionCard
+        :title="
+          record.kind === 'sales_order'
+            ? '订单明细'
+            : record.kind === 'sales_contract'
+              ? '合同明细'
+              : '物料明细'
+        "
+        :empty="!record.lines.length"
+        empty-title="暂无明细"
+      >
         <div class="divide-y divide-[var(--el-border-color-lighter)]">
           <div
             v-for="(line, index) in record.lines"
@@ -67,7 +77,9 @@
                   ><div class="text-xs text-[var(--art-gray-600)]">金额</div
                   ><div class="mt-1 font-semibold tabular-nums text-[var(--art-gray-900)]">{{
                     formatCurrencyValue(
-                      line.quantity * line.unitPrice * (1 - (line.discountRate || 0) / 100)
+                      record.kind === 'sales_order' || record.kind === 'sales_contract'
+                        ? calculateContractLine(line).amount
+                        : line.quantity * line.unitPrice * (1 - (line.discountRate || 0) / 100)
                     )
                   }}</div></div
                 >
@@ -116,7 +128,7 @@
           :key="clause.id"
           class="border-b border-[var(--el-border-color-lighter)] py-2 text-sm last:border-0"
         >
-          <strong>{{ clause.title }}</strong
+          <strong>{{ clauseLabel(clause.title) }}</strong
           ><p class="mt-1 whitespace-pre-wrap text-[var(--art-gray-600)]">{{ clause.content }}</p>
         </div>
       </ArtSectionCard>
@@ -165,6 +177,7 @@
   import { storeToRefs } from 'pinia'
   import { fetchQuoteExpenses, fetchScmSalesDocument, type ScmSalesDocument } from '@scm/api'
   import { scmDocumentConfigs } from '../document-config'
+  import { calculateContractLine } from '../quotation-pricing'
 
   defineOptions({ name: 'ScmDocumentDetailDrawer' })
 
@@ -202,8 +215,10 @@
   const config = computed(() => scmDocumentConfigs[record.value.kind])
   const { getDictMap } = storeToRefs(useUserStore())
   const feeNames = ref(new Map<string, string>())
+  const clauseLabel = (value: string): string =>
+    getDictMap.value?.scmSalesContractClause?.find((item) => item.value === value)?.label || value
 
-  const headerItems: ArtDescriptionItem<ScmSalesDocument>[] = [
+  const headerItems = computed<ArtDescriptionItem<ScmSalesDocument>[]>(() => [
     { key: 'documentNo', label: '单据编号', field: 'documentNo' },
     {
       key: 'status',
@@ -212,6 +227,33 @@
         getDictMap.value?.scmDocumentStatus?.find((item) => item.value === row.status)?.label ||
         row.status
     },
+    ...(record.value.kind === 'sales_contract'
+      ? [
+          {
+            key: 'contractStatus',
+            label: '合同状态',
+            value: (row: ScmSalesDocument) =>
+              getDictMap.value?.scmSalesContractStatus?.find(
+                (item) => item.value === row.contractStatus
+              )?.label ||
+              row.contractStatus ||
+              '--'
+          }
+        ]
+      : []),
+    ...(record.value.kind === 'sales_order'
+      ? [
+          {
+            key: 'orderStatus',
+            label: '订单状态',
+            value: (row: ScmSalesDocument) =>
+              getDictMap.value?.scmSalesOrderStatus?.find((item) => item.value === row.orderStatus)
+                ?.label ||
+              row.orderStatus ||
+              '--'
+          }
+        ]
+      : []),
     {
       key: 'projectName',
       label: '项目名称',
@@ -235,12 +277,15 @@
     },
     { key: 'currency', label: '币种', field: 'currency' },
     { key: 'remark', label: '备注', value: (row: ScmSalesDocument) => row.remark || '--', span: 2 }
-  ]
+  ])
   const detailItems = computed<ArtDescriptionItem<ScmSalesDocument>[]>(() =>
     config.value.fields.map((field) => ({
       key: field.key,
       label: field.label,
-      value: (row: ScmSalesDocument) => String(row.details[field.key] ?? '--'),
+      value: (row: ScmSalesDocument) =>
+        field.key === 'salespersonId'
+          ? row.details.salesperson || '--'
+          : String(row.details[field.key] ?? '--'),
       span: field.span === 24 ? 2 : 1
     }))
   )

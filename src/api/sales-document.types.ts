@@ -22,7 +22,12 @@ export type ScmDocumentStatus =
   | 'shipped'
   | 'loaded'
 
+export type ScmSalesContractStatus = 'DRAFT' | 'SUBM' | 'APRV' | 'PRUN' | 'PCOM' | 'FCOM' | 'CNCL'
+export type ScmSalesOrderStatus =
+  'DRAFT' | 'SUBM' | 'APRV' | 'PRUN' | 'PDEL' | 'FDEL' | 'CLSD' | 'CNCL'
+
 export interface ScmDocumentDetails {
+  quotationScene?: 'standard' | 'project'
   title?: string
   paperContractNo?: string
   productCategory?: string
@@ -32,6 +37,8 @@ export interface ScmDocumentDetails {
   effectiveDate?: string
   expiryDate?: string
   salesperson?: string
+  salespersonId?: string
+  salesDepartment?: string
   signatoryCompany?: string
   customerSignatory?: string
   projectOwner?: string
@@ -42,6 +49,17 @@ export interface ScmDocumentDetails {
   transportFee?: number
   vehicleType?: string
   projectDescription?: string
+  constructionNo?: string
+  plannedProjectName?: string
+  projectAddress?: string
+  autoCreateProject?: boolean
+  autoCreateMaterials?: boolean
+  autoBuildBom?: boolean
+  materialCategoryId?: string
+  materialTypeId?: string
+  baseUnitId?: string
+  materialCodeRuleId?: string
+  automationResult?: ScmProjectQuotationAutomationResult
   deliveryAddress?: string
   terminalCustomer?: string
   shippingAddress?: string
@@ -56,6 +74,40 @@ export interface ScmDocumentDetails {
   driverPhone?: string
   freightCost?: number
   paymentPlanMode?: 'ratio' | 'amount'
+  contractStatus?: string
+}
+
+export interface ScmProjectQuotationAutomationResult {
+  projectId?: string
+  projectCode?: string
+  projectName?: string
+  materialIds: string[]
+  reusedMaterialIds?: string[]
+  bomIds: string[]
+  executedAt?: string
+}
+
+export interface ScmEngineeringReferenceOption {
+  id: string
+  code: string
+  name: string
+  tenantId: string
+}
+
+export interface ScmEngineeringReferenceOptions {
+  categories: ScmEngineeringReferenceOption[]
+  materialTypes: ScmEngineeringReferenceOption[]
+  units: ScmEngineeringReferenceOption[]
+  codeRules: ScmEngineeringReferenceOption[]
+}
+
+export type ScmQuotationConversionTarget = 'sales_order' | 'purchase_request' | 'purchase_order'
+
+export interface ScmQuotationConversionResult {
+  id: string
+  documentNo: string
+  targetKind: ScmQuotationConversionTarget
+  reused: boolean
 }
 
 export interface ScmDocumentLine {
@@ -63,8 +115,11 @@ export interface ScmDocumentLine {
   materialId: string
   materialCode: string
   materialDescription: string
+  materialSource?: string
   specification?: string
   manufacturer?: string
+  brand?: string
+  division?: string
   salesUnit?: string
   stockUnit?: string
   quantity: number
@@ -85,6 +140,9 @@ export interface ScmDocumentLine {
   location?: string
   needDate?: string
   sourceLineId?: string
+  sourceDocumentId?: string
+  sourceDocumentNo?: string
+  sourceLineNo?: number
   deliveredQuantity?: number
   outboundQuantity?: number
   returnQuantity?: number
@@ -135,6 +193,9 @@ export interface ScmSalesDocument {
   customerId: string | null
   sourceId: string | null
   status: ScmDocumentStatus
+  contractStatus?: ScmSalesContractStatus
+  orderStatus?: ScmSalesOrderStatus
+  receivedAmount?: number
   documentDate: string
   deliveryDate: string | null
   currency: string
@@ -204,6 +265,11 @@ export interface ScmMaterialOption {
   specification?: string | null
   unit?: string | null
   materialSource?: string | null
+  auxiliaryUnit?: string | null
+  auxiliaryUnit2?: string | null
+  auxiliaryUnitId?: string | null
+  auxiliaryUnit2Id?: string | null
+  unitConversions?: Array<{ sourceUnitId: string; baseFactor: number; sourceFactor: number }>
 }
 
 export interface ScmDocumentTypeOption {

@@ -113,246 +113,22 @@
                 </ElButton>
               </div>
             </template>
-            <div class="flex flex-col gap-3">
-              <div
-                v-for="(line, index) in lines"
-                :key="line.lineId"
-                class="min-w-0 rounded-xl border border-[var(--el-border-color-light)] bg-[var(--el-fill-color-extra-light)] p-4"
-              >
-                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div class="flex min-w-0 items-start gap-3">
-                    <span
-                      class="flex size-7 shrink-0 items-center justify-center rounded-md bg-[var(--el-color-primary-light-9)] text-xs font-semibold text-[var(--el-color-primary)]"
-                      >{{ index + 1 }}</span
-                    >
-                    <div class="min-w-0">
-                      <strong class="block break-words text-sm">{{
-                        line.materialDescription || '新物料'
-                      }}</strong>
-                      <span class="mt-1 block break-words text-xs text-[var(--art-gray-600)]"
-                        >{{ line.materialCode || '请选择物料'
-                        }}<span v-if="line.specification"> · {{ line.specification }}</span
-                        ><span v-if="line.sourceDocumentNo">
-                          · 来源 {{ line.sourceDocumentNo }}</span
-                        ></span
-                      >
-                    </div>
-                  </div>
-                  <ElButton type="danger" text @click="lines.splice(index, 1)">
-                    <ArtSvgIcon icon="ri:delete-bin-line" />移除
-                  </ElButton>
-                </div>
-                <div class="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >物料编码
-                    <ElSelect
-                      v-model="line.materialId"
-                      filterable
-                      class="w-full"
-                      :disabled="Boolean(line.sourceLineId)"
-                      placeholder="选择物料"
-                      @change="(id: string) => selectMaterial(line, id)"
-                    >
-                      <ElOption
-                        v-for="material in materials"
-                        :key="material.id"
-                        :value="material.id"
-                        :label="`${material.materialCode} · ${material.materialDescription}`"
-                      />
-                    </ElSelect>
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >数量
-                    <ElInputNumber
-                      v-model="line.quantity"
-                      :min="0.001"
-                      :precision="3"
-                      :controls="false"
-                      class="w-full!"
-                    />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >采购单位
-                    <ElInput v-model="line.unit" maxlength="30" placeholder="单位" />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >需求日期
-                    <ElDatePicker
-                      v-model="line.needDate"
-                      type="date"
-                      value-format="YYYY-MM-DD"
-                      class="w-full!"
-                    />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >单价（元）
-                    <ElInputNumber
-                      v-model="line.unitPrice"
-                      :min="0"
-                      :precision="2"
-                      :controls="false"
-                      class="w-full!"
-                    />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >税率（%）
-                    <ElInputNumber
-                      v-model="line.taxRate"
-                      :min="0"
-                      :max="100"
-                      :precision="2"
-                      :controls="false"
-                      class="w-full!"
-                    />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >折扣方式
-                    <ElSelect
-                      v-model="line.discountMode"
-                      clearable
-                      class="w-full"
-                      placeholder="无折扣"
-                    >
-                      <ElOption
-                        v-for="option in discountOptions"
-                        :key="option.value"
-                        :label="option.label"
-                        :value="option.value"
-                      />
-                    </ElSelect>
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >折扣率（%）
-                    <ElInputNumber
-                      v-model="line.discountRate"
-                      :min="0"
-                      :max="100"
-                      :precision="2"
-                      :controls="false"
-                      class="w-full!"
-                    />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >辅助数量
-                    <ElInputNumber
-                      v-model="line.auxiliaryQuantity"
-                      :min="0"
-                      :precision="3"
-                      :controls="false"
-                      class="w-full!"
-                    />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >辅助单位
-                    <ElInput v-model="line.auxiliaryUnit" maxlength="30" placeholder="可选" />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >辅助数量（2）
-                    <ElInputNumber
-                      v-model="line.auxiliaryQuantity2"
-                      :min="0"
-                      :precision="3"
-                      :controls="false"
-                      class="w-full!"
-                    />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >辅助单位（2）
-                    <ElInput v-model="line.auxiliaryUnit2" maxlength="30" placeholder="可选" />
-                  </label>
-                  <div class="flex min-w-0 items-end"
-                    ><ElCheckbox v-model="line.gift">赠品</ElCheckbox></div
-                  >
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >价税合计
-                    <span
-                      class="flex min-h-8 items-center font-semibold text-[var(--el-color-primary)]"
-                      >{{ formatCurrencyValue(lineTotal(line)) }}</span
-                    >
-                  </label>
-                  <label
-                    v-if="kind === 'purchase_order' || kind === 'receipt_notice'"
-                    class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >仓库
-                    <ElInput v-model="line.warehouse" maxlength="80" placeholder="收货仓库" />
-                  </label>
-                  <label
-                    v-if="kind === 'purchase_order' || kind === 'receipt_notice'"
-                    class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >仓位
-                    <ElInput v-model="line.location" maxlength="80" placeholder="收货仓位" />
-                  </label>
-                  <label
-                    v-if="kind === 'purchase_request'"
-                    class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >需求原因
-                    <ElInput v-model="line.reason" maxlength="200" placeholder="说明采购用途" />
-                  </label>
-                  <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                    >备注
-                    <ElInput v-model="line.remark" maxlength="200" placeholder="可选" />
-                  </label>
-                  <template v-if="kind === 'receipt_notice'">
-                    <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
-                      >批号
-                      <ElInput
-                        v-model="line.batchNo"
-                        v-auth="config.permissions.GenerateBatch"
-                        maxlength="80"
-                        placeholder="可手填或生成"
-                      />
-                    </label>
-                    <div class="flex min-w-0 flex-col justify-end gap-1">
-                      <ElButton
-                        v-auth="config.permissions.GenerateBatch"
-                        plain
-                        @click="generateBatch(line)"
-                        ><ArtSvgIcon icon="ri:barcode-line" />生成批号</ElButton
-                      >
-                    </div>
-                    <div class="flex min-w-0 flex-col justify-end gap-1">
-                      <ElButton
-                        v-auth="config.permissions.GenerateSerial"
-                        plain
-                        @click="generateSerial(line)"
-                        ><ArtSvgIcon icon="ri:hashtag" />生成序列号</ElButton
-                      >
-                    </div>
-                    <div class="flex min-w-0 items-center text-xs text-[var(--art-gray-600)]">
-                      已生成 {{ line.serialNumbers?.length ?? 0 }} 个序列号
-                    </div>
-                  </template>
-                </div>
-                <div
-                  class="mt-3 grid grid-cols-2 gap-2 border-t border-[var(--el-border-color-light)] pt-3 text-xs sm:grid-cols-4"
-                >
-                  <div
-                    ><span class="text-[var(--art-gray-600)]">含税单价</span
-                    ><strong class="mt-1 block tabular-nums">{{
-                      formatCurrencyValue(lineTaxedUnitPrice(line))
-                    }}</strong></div
-                  >
-                  <div
-                    ><span class="text-[var(--art-gray-600)]">金额</span
-                    ><strong class="mt-1 block tabular-nums">{{
-                      formatCurrencyValue(lineSubtotal(line))
-                    }}</strong></div
-                  >
-                  <div
-                    ><span class="text-[var(--art-gray-600)]">折扣额</span
-                    ><strong class="mt-1 block tabular-nums">{{
-                      formatCurrencyValue(lineDiscountAmount(line))
-                    }}</strong></div
-                  >
-                  <div
-                    ><span class="text-[var(--art-gray-600)]">税金额</span
-                    ><strong class="mt-1 block tabular-nums">{{
-                      formatCurrencyValue(lineTaxAmount(line))
-                    }}</strong></div
-                  >
-                </div>
-              </div>
-            </div>
+            <ArtTable
+              ref="lineTableRef"
+              :data="lines"
+              :columns="lineColumns"
+              :pagination="false"
+              row-key="lineId"
+              table-layout="fixed"
+              border
+              show-summary
+              :summary-method="lineSummaryMethod"
+              :max-height="460"
+              scrollbar-always-on
+              class="scm-editable-table"
+              empty-text="暂无物料明细"
+              empty-description="选择来源单据或参选物料后开始填写。"
+            />
           </ArtSectionCard>
         </ElTabPane>
         <ElTabPane v-if="config.tabs.includes('payments')" label="付款计划" name="payments">
@@ -409,9 +185,12 @@
                 aria-label="应付金额"
               />
               <ElCheckbox v-model="plan.isAdvance">预付</ElCheckbox>
-              <ElButton type="danger" text @click="paymentPlans.splice(index, 1)">
-                <ArtSvgIcon icon="ri:delete-bin-line" />删除
-              </ElButton>
+              <ArtIconButton
+                icon="ri:delete-bin-line"
+                label="移除付款计划"
+                tone="danger"
+                @click="paymentPlans.splice(index, 1)"
+              />
               <template v-if="kind === 'purchase_order'">
                 <ElInput v-model="plan.contractNo" placeholder="采购合同号" />
                 <ElInputNumber
@@ -453,12 +232,16 @@
               <div class="mb-3 flex items-center justify-between gap-2">
                 <strong class="text-sm">第 {{ index + 1 }} 期交货</strong>
                 <div
-                  ><ElButton text @click="copyDelivery(plan)"
-                    ><ArtSvgIcon icon="ri:file-copy-line" />复制</ElButton
-                  ><ElButton type="danger" text @click="deliveryPlans.splice(index, 1)"
-                    ><ArtSvgIcon icon="ri:delete-bin-line" />删除</ElButton
-                  ></div
-                >
+                  ><ArtIconButton
+                    icon="ri:file-copy-line"
+                    label="复制交货计划"
+                    @click="copyDelivery(plan)" />
+                  <ArtIconButton
+                    icon="ri:delete-bin-line"
+                    label="移除交货计划"
+                    tone="danger"
+                    @click="deliveryPlans.splice(index, 1)"
+                /></div>
               </div>
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--art-gray-600)]"
@@ -535,10 +318,13 @@
                     :label="item.label"
                     :value="item.value"
                   /> </ElSelect
-                ><ElButton type="danger" text @click="clauses.splice(index, 1)"
-                  ><ArtSvgIcon icon="ri:delete-bin-line" />删除</ElButton
-                ></div
-              >
+                ><ArtIconButton
+                  icon="ri:delete-bin-line"
+                  label="移除合同条款"
+                  tone="danger"
+                  @click="clauses.splice(index, 1)"
+                />
+              </div>
               <ElInput
                 v-model="clause.content"
                 type="textarea"
@@ -569,7 +355,7 @@
       v-model="selectedMaterialIds"
       multiple
       filterable
-      class="w-full"
+      class="w-full!"
       placeholder="搜索物料编码或名称"
     >
       <ElOption
@@ -582,7 +368,7 @@
   </ArtDialog>
   <ArtDialog ref="quotationDialogRef" size="md">
     <div class="mb-3 text-sm text-[var(--art-gray-600)]">仅显示当前项目的已生效销售报价物料。</div>
-    <ElSelect v-model="selectedQuotationId" filterable class="w-full" placeholder="选择销售报价单">
+    <ElSelect v-model="selectedQuotationId" filterable class="w-full!" placeholder="选择销售报价单">
       <ElOption
         v-for="quotation in eligibleQuotations"
         :key="quotation.id"
@@ -636,17 +422,31 @@
   </ArtDialog>
 </template>
 
-<script setup lang="ts">
+<script setup lang="tsx">
   import dayjs from 'dayjs'
-  import { ElMessage, type FormRules } from 'element-plus'
+  import {
+    ElButton,
+    ElCheckbox,
+    ElDatePicker,
+    ElInput,
+    ElInputNumber,
+    ElMessage,
+    ElOption,
+    ElSelect,
+    type FormRules
+  } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
   import ArtForm from '@/components/core/forms/art-form/index.vue'
   import type { FormItem } from '@/components/core/forms/art-form/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
+  import ArtTable, { type ArtTableExpose } from '@/components/core/tables/art-table/index.vue'
+  import ArtIconButton from '@/components/core/widget/art-icon-button/index.vue'
   import ArtEmployeeSelect from '@/components/business/art-employee-select/index.vue'
+  import type { ColumnOption } from '@/types'
   import type { EmployeeIntegrationItem } from '@/api/integration/employees'
   import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
+  import { useAuth } from '@/hooks/core/useAuth'
   import { useUserStore } from '@/store/modules/user'
   import { formatCurrencyValue } from '@/utils/ui/format'
   import {
@@ -676,6 +476,7 @@
     type ScmSupplierOption
   } from '@scm/api'
   import { purchaseConfigs } from '../purchase-config'
+  import '../../scm-editable-table.css'
 
   interface OpenOptions {
     kind: ScmPurchaseKind
@@ -700,12 +501,14 @@
   defineOptions({ name: 'ScmPurchaseDialog' })
   const emit = defineEmits<{ success: [mode: 'add' | 'edit'] }>()
   const userStore = useUserStore()
+  const { hasAuth } = useAuth()
   const { shouldExposeTenantField } = useTenantScopeFormPolicy()
   const dialogRef = ref<ArtDialogExpose<OpenOptions>>()
   const materialDialogRef = ref<ArtDialogExpose>()
   const quotationDialogRef = ref<ArtDialogExpose>()
   const sourceLineDialogRef = ref<ArtDialogExpose>()
   const headerFormRef = ref<{ validate: () => Promise<boolean>; clearValidate: () => void }>()
+  const lineTableRef = ref<ArtTableExpose>()
   const kind = ref<ScmPurchaseKind>('purchase_contract')
   const config = computed(() => purchaseConfigs[kind.value])
   const recordId = ref<string>()
@@ -812,6 +615,311 @@
       (1 - Number(line.discountRate || 0) / 100) *
       (1 + Number(line.taxRate || 0) / 100)
     )
+  }
+
+  const lineColumns = computed<ColumnOption<ScmPurchaseLine>[]>(() => [
+    {
+      type: 'expand',
+      prop: 'extra',
+      label: '',
+      width: 48,
+      formatter: (row) => (
+        <div class="grid min-w-0 grid-cols-2 gap-3 p-4 text-xs md:grid-cols-4">
+          <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+            需求日期
+            <ElDatePicker
+              v-model={row.needDate}
+              type="date"
+              value-format="YYYY-MM-DD"
+              class="w-full!"
+            />
+          </label>
+          <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+            辅助数量
+            <ElInputNumber
+              v-model={row.auxiliaryQuantity}
+              min={0}
+              precision={3}
+              controls={false}
+              class="w-full!"
+            />
+          </label>
+          <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+            辅助单位
+            <ElInput v-model={row.auxiliaryUnit} maxlength={30} placeholder="可选" />
+          </label>
+          <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+            辅助数量（2）
+            <ElInputNumber
+              v-model={row.auxiliaryQuantity2}
+              min={0}
+              precision={3}
+              controls={false}
+              class="w-full!"
+            />
+          </label>
+          <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+            辅助单位（2）
+            <ElInput v-model={row.auxiliaryUnit2} maxlength={30} placeholder="可选" />
+          </label>
+          {(kind.value === 'purchase_order' || kind.value === 'receipt_notice') && (
+            <>
+              <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+                仓库
+                <ElInput v-model={row.warehouse} maxlength={80} placeholder="收货仓库" />
+              </label>
+              <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+                仓位
+                <ElInput v-model={row.location} maxlength={80} placeholder="收货仓位" />
+              </label>
+            </>
+          )}
+          {kind.value === 'purchase_request' && (
+            <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+              需求原因
+              <ElInput v-model={row.reason} maxlength={200} placeholder="说明采购用途" />
+            </label>
+          )}
+          {kind.value === 'receipt_notice' && (
+            <>
+              <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+                批号
+                <ElInput v-model={row.batchNo} maxlength={80} placeholder="可手填或生成" />
+              </label>
+              <div class="flex flex-wrap items-end gap-2">
+                {config.value.permissions.GenerateBatch &&
+                  hasAuth(config.value.permissions.GenerateBatch) && (
+                    <ElButton onClick={() => generateBatch(row)}>生成批号</ElButton>
+                  )}
+                {config.value.permissions.GenerateSerial &&
+                  hasAuth(config.value.permissions.GenerateSerial) && (
+                    <ElButton onClick={() => generateSerial(row)}>生成序列号</ElButton>
+                  )}
+              </div>
+              <span class="self-end text-[var(--art-gray-600)]">
+                已生成 {row.serialNumbers?.length ?? 0} 个序列号
+              </span>
+            </>
+          )}
+          <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)] md:col-span-2">
+            备注
+            <ElInput v-model={row.remark} maxlength={200} placeholder="可选" />
+          </label>
+          <div class="flex items-end gap-4 text-[var(--art-gray-700)] md:col-span-2">
+            <span>含税单价 {formatCurrencyValue(lineTaxedUnitPrice(row))}</span>
+            <span>折扣额 {formatCurrencyValue(lineDiscountAmount(row))}</span>
+          </div>
+        </div>
+      )
+    },
+    {
+      prop: 'materialId',
+      label: '物料编码',
+      width: 215,
+      fixed: 'left',
+      required: true,
+      requiredMessage: ({ rowIndex }) => `第 ${rowIndex + 1} 行未选择物料`,
+      formatter: (row) => (
+        <div class="min-w-0 w-full">
+          <ElSelect
+            v-model={row.materialId}
+            filterable
+            disabled={Boolean(row.sourceLineId)}
+            placeholder="选择物料"
+            class="w-full!"
+            aria-label="物料编码"
+            onChange={(id: string) => selectMaterial(row, id)}
+          >
+            {materials.value.map((material) => (
+              <ElOption
+                key={material.id}
+                value={material.id}
+                label={`${material.materialCode} · ${material.materialDescription}`}
+              />
+            ))}
+          </ElSelect>
+          {row.sourceDocumentNo && (
+            <small
+              class="block truncate pt-1 text-[var(--art-gray-600)]"
+              title={row.sourceDocumentNo}
+            >
+              来源 {row.sourceDocumentNo}
+            </small>
+          )}
+        </div>
+      )
+    },
+    { prop: 'materialDescription', label: '物料描述', minWidth: 180, showOverflowTooltip: true },
+    {
+      prop: 'quantity',
+      label: '数量',
+      width: 120,
+      align: 'right',
+      required: true,
+      rules: {
+        validator: ({ value }) => Number.isFinite(Number(value)) && Number(value) > 0,
+        message: '数量必须大于 0'
+      },
+      formatter: (row) => (
+        <ElInputNumber
+          v-model={row.quantity}
+          min={0.001}
+          precision={3}
+          controls={false}
+          class="w-full!"
+          aria-label="数量"
+        />
+      )
+    },
+    {
+      prop: 'unit',
+      label: '采购单位',
+      width: 110,
+      formatter: (row) => (
+        <ElInput v-model={row.unit} maxlength={30} placeholder="单位" aria-label="采购单位" />
+      )
+    },
+    {
+      prop: 'unitPrice',
+      label: '单价（元）',
+      width: 140,
+      align: 'right',
+      required: true,
+      rules: {
+        validator: ({ value }) => Number.isFinite(Number(value)) && Number(value) >= 0,
+        message: '单价不能小于 0'
+      },
+      formatter: (row) => (
+        <ElInputNumber
+          v-model={row.unitPrice}
+          min={0}
+          precision={2}
+          controls={false}
+          class="w-full!"
+          aria-label="单价"
+        />
+      )
+    },
+    {
+      prop: 'taxRate',
+      label: '税率（%）',
+      width: 120,
+      align: 'right',
+      required: true,
+      rules: {
+        validator: ({ value }) =>
+          Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100,
+        message: '税率须为 0–100%'
+      },
+      formatter: (row) => (
+        <ElInputNumber
+          v-model={row.taxRate}
+          min={0}
+          max={100}
+          precision={2}
+          controls={false}
+          class="w-full!"
+          aria-label="税率"
+        />
+      )
+    },
+    {
+      prop: 'discountMode',
+      label: '折扣方式',
+      width: 135,
+      formatter: (row) => (
+        <ElSelect
+          v-model={row.discountMode}
+          placeholder="无折扣"
+          class="w-full!"
+          aria-label="折扣方式"
+        >
+          {discountOptions.value.map((item) => (
+            <ElOption key={item.value} value={item.value} label={item.label} />
+          ))}
+        </ElSelect>
+      )
+    },
+    {
+      prop: 'discountRate',
+      label: '折扣率（%）',
+      width: 135,
+      align: 'right',
+      formatter: (row) => (
+        <ElInputNumber
+          v-model={row.discountRate}
+          min={0}
+          max={100}
+          precision={2}
+          controls={false}
+          disabled={!row.discountMode || row.discountMode === 'none'}
+          class="w-full!"
+          aria-label="折扣率"
+        />
+      )
+    },
+    {
+      prop: 'amount',
+      label: '金额（元）',
+      width: 135,
+      align: 'right',
+      formatter: (row) => (
+        <strong class="tabular-nums">{formatCurrencyValue(lineSubtotal(row))}</strong>
+      )
+    },
+    {
+      prop: 'tax',
+      label: '税额（元）',
+      width: 125,
+      align: 'right',
+      formatter: (row) => (
+        <span class="tabular-nums">{formatCurrencyValue(lineTaxAmount(row))}</span>
+      )
+    },
+    {
+      prop: 'total',
+      label: '价税合计（元）',
+      width: 155,
+      align: 'right',
+      formatter: (row) => (
+        <strong class="tabular-nums">{formatCurrencyValue(lineTotal(row))}</strong>
+      )
+    },
+    {
+      prop: 'gift',
+      label: '赠品',
+      width: 78,
+      align: 'center',
+      formatter: (row) => <ElCheckbox v-model={row.gift} aria-label="赠品" />
+    },
+    {
+      prop: 'operation',
+      label: '操作',
+      width: 68,
+      fixed: 'right',
+      align: 'center',
+      formatter: (row) => (
+        <ArtIconButton
+          icon="ri:delete-bin-line"
+          label="移除物料"
+          tone="danger"
+          onClick={() => lines.value.splice(lines.value.indexOf(row), 1)}
+        />
+      )
+    }
+  ])
+
+  function lineSummaryMethod({ columns }: { columns: Array<{ property?: string }> }): string[] {
+    return columns.map((column) => {
+      if (column.property === 'materialId') return '合计'
+      if (column.property === 'quantity') return String(totalQuantity.value)
+      if (column.property === 'amount')
+        return formatCurrencyValue(lines.value.reduce((sum, line) => sum + lineSubtotal(line), 0))
+      if (column.property === 'tax')
+        return formatCurrencyValue(lines.value.reduce((sum, line) => sum + lineTaxAmount(line), 0))
+      if (column.property === 'total') return formatCurrencyValue(totalAmount.value)
+      return ''
+    })
   }
 
   const headerRules: FormRules<HeaderModel> = {
@@ -1235,7 +1343,14 @@
   }
   async function handleSubmit() {
     try {
-      if (!(await headerFormRef.value?.validate()) || !validateBusiness()) return false
+      if (!(await headerFormRef.value?.validate())) return false
+      const lineValidation = await lineTableRef.value?.validate()
+      if (lineValidation && !lineValidation.valid) {
+        activeTab.value = 'lines'
+        ElMessage.warning(lineValidation.firstError?.message ?? '请完善物料明细')
+        return false
+      }
+      if (!validateBusiness()) return false
       const input: ScmPurchaseWrite = {
         tenantId: header.tenantId,
         kind: kind.value,

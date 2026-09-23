@@ -3,7 +3,7 @@ import type { ScmDocumentDetails, ScmDocumentKind, ScmDocumentStatus } from '@sc
 export interface ScmDetailField {
   key: keyof ScmDocumentDetails
   label: string
-  type: 'input' | 'date' | 'number' | 'select'
+  type: 'input' | 'date' | 'number' | 'select' | 'slot'
   dictionary?: string
   required?: boolean
   span?: number
@@ -36,6 +36,7 @@ export interface ScmDocumentConfig {
   useDeliveryPlans?: boolean
   useClauses?: boolean
   allowImport?: boolean
+  projectRequired?: boolean
 }
 
 const salesQuotation: ScmDocumentConfig = {
@@ -49,11 +50,12 @@ const salesQuotation: ScmDocumentConfig = {
     Copy: 'ScmSalesQuotationDoc:Copy',
     Import: 'ScmSalesQuotationDoc:Import',
     Export: 'ScmSalesQuotationDoc:Export',
+    Convert: 'ScmSalesQuotationDoc:Convert',
     Activate: 'ScmSalesQuotationDoc:Activate',
     Expire: 'ScmSalesQuotationDoc:Expire'
   },
   title: '销售报价单',
-  description: '维护产品报价、物料明细和费用明细；金额与毛利由系统统一核算。',
+  description: '统一录入标准产品与项目工程报价；工程数据由本单手填或批量导入。',
   icon: 'ri:file-list-3-line',
   eyebrow: 'SALES QUOTATIONS',
   numberLabel: '报价单号',
@@ -77,7 +79,8 @@ const salesQuotation: ScmDocumentConfig = {
     { key: 'materialDescription', label: '物料描述', type: 'input', span: 24 }
   ],
   useFees: true,
-  allowImport: true
+  allowImport: true,
+  projectRequired: false
 }
 
 const projectQuotation: ScmDocumentConfig = {
@@ -97,31 +100,43 @@ const projectQuotation: ScmDocumentConfig = {
     GeneratePlan: 'ScmProjectQuotation:GeneratePlan'
   },
   title: '项目报价',
-  description: '汇总项目报价明细、附加费用与客户信息，并从已生效报价生成销售合同。',
+  description: '由销售报价单生成；提交时按来源报价的配置联动项目、物料编码与 BOM。',
   icon: 'ri:briefcase-4-line',
   eyebrow: 'PROJECT QUOTATIONS',
   numberLabel: '报价单号',
   sourceKind: 'sales_quotation',
   sourceLabel: '来源销售报价单',
+  sourceRequired: true,
   statusValues: ['created', 'effective', 'completed', 'closed'],
   transitions: {
-    created: [{ status: 'effective', action: 'Activate', label: '生效' }],
+    created: [
+      {
+        status: 'effective',
+        action: 'Activate',
+        label: '提交并生效',
+        confirm: '系统将按来源销售报价单的设置创建项目、物料编码和 BOM 草稿。'
+      }
+    ],
     effective: [
       { status: 'completed', action: 'Complete', label: '完结' },
       { status: 'closed', action: 'Close', label: '关闭' }
     ]
   },
   fields: [
+    { key: 'plannedProjectName', label: '项目名称', type: 'input' },
+    { key: 'projectAddress', label: '项目地址', type: 'input', span: 24 },
     { key: 'projectOwner', label: '负责人', type: 'input' },
     { key: 'projectDepartment', label: '负责部门', type: 'input' },
     { key: 'contactName', label: '联系人', type: 'input' },
     { key: 'contactPhone', label: '联系电话', type: 'input' },
+    { key: 'constructionNo', label: '施工号', type: 'input', required: true },
     { key: 'packageFee', label: '包装费（元）', type: 'number' },
     { key: 'transportFee', label: '运输费（元）', type: 'number' },
     { key: 'vehicleType', label: '运载工具车', type: 'input' },
     { key: 'projectDescription', label: '项目描述', type: 'input', span: 24 }
   ],
-  useFees: true
+  useFees: true,
+  projectRequired: false
 }
 
 const salesContract: ScmDocumentConfig = {
@@ -170,7 +185,7 @@ const salesContract: ScmDocumentConfig = {
   fields: [
     { key: 'title', label: '合同名称', type: 'input', required: true, span: 24 },
     { key: 'paperContractNo', label: '纸质合同号', type: 'input' },
-    { key: 'salesperson', label: '销售员', type: 'input' },
+    { key: 'salespersonId', label: '销售员', type: 'slot' },
     { key: 'signedDate', label: '签订日期', type: 'date' },
     { key: 'effectiveDate', label: '起始日期', type: 'date' },
     { key: 'expiryDate', label: '截止日期', type: 'date' },
@@ -190,7 +205,10 @@ const salesOrder: ScmDocumentConfig = {
     Edit: 'ScmSalesOrder:Edit',
     Delete: 'ScmSalesOrder:Delete',
     Copy: 'ScmSalesOrder:Copy',
+    Import: 'ScmSalesOrder:Import',
     Export: 'ScmSalesOrder:Export',
+    Select: 'ScmSalesOrder:Select',
+    Push: 'ScmSalesOrder:Push',
     Submit: 'ScmSalesOrder:Submit',
     Withdraw: 'ScmSalesOrder:Withdraw',
     Approve: 'ScmSalesOrder:Approve',
@@ -199,7 +217,7 @@ const salesOrder: ScmDocumentConfig = {
     Cancel: 'ScmSalesOrder:Cancel'
   },
   title: '销售订单',
-  description: '关联销售合同，安排收款与发货计划，并追踪订单执行状态。',
+  description: '从报价、合同或物料编制订单，安排收款与发货计划。',
   icon: 'ri:shopping-bag-3-line',
   eyebrow: 'SALES ORDERS',
   numberLabel: '销售订单号',
@@ -221,7 +239,11 @@ const salesOrder: ScmDocumentConfig = {
       { status: 'cancelled', action: 'Cancel', label: '取消' }
     ]
   },
-  fields: [{ key: 'deliveryAddress', label: '送货地址', type: 'input', span: 24 }],
+  fields: [
+    { key: 'salespersonId', label: '销售员', type: 'slot' },
+    { key: 'salesDepartment', label: '销售部门', type: 'input' },
+    { key: 'deliveryAddress', label: '送货地址', type: 'input', span: 24 }
+  ],
   usePaymentPlans: true,
   useDeliveryPlans: true
 }
@@ -242,13 +264,13 @@ const shippingNotice: ScmDocumentConfig = {
     Complete: 'ScmShippingNotice:Complete'
   },
   title: '发货通知单',
-  description: '从未完成交货的订单选择物料，安排发货时间、地址与运输方式。',
+  description: '选取销售订单明细或直接添加物料，安排发货地址与运输方式。',
   icon: 'ri:truck-line',
   eyebrow: 'SHIPPING NOTICES',
   numberLabel: '发货通知单号',
   sourceKind: 'sales_order',
   sourceLabel: '来源销售订单',
-  sourceRequired: true,
+  sourceRequired: false,
   statusValues: ['draft', 'submitted', 'shipped', 'completed'],
   transitions: {
     draft: [{ status: 'submitted', action: 'Submit', label: '提交通知' }],

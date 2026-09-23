@@ -37,50 +37,20 @@
             添加费用
           </ElButton>
         </template>
-        <div class="flex flex-col gap-2">
-          <div
-            v-for="(fee, index) in form.feeItems"
-            :key="index"
-            class="grid min-w-0 grid-cols-1 items-center gap-2 rounded-lg border border-[var(--el-border-color-light)] p-3 sm:grid-cols-[minmax(0,1fr)_160px_auto]"
-          >
-            <ElSelect
-              v-model="fee.expenseId"
-              filterable
-              :loading="referencesLoading"
-              placeholder="选择报价费用"
-              class="w-full"
-              :aria-label="`第 ${index + 1} 项费用名称`"
-            >
-              <ElOption
-                v-for="expense in availableExpenses"
-                :key="expense.id"
-                :label="`${expense.expenseName}（${expense.expenseCode}）`"
-                :value="expense.id"
-                :disabled="
-                  form.feeItems.some(
-                    (item, itemIndex) => itemIndex !== index && item.expenseId === expense.id
-                  )
-                "
-              />
-            </ElSelect>
-            <ElInputNumber
-              v-model="fee.amount"
-              :min="0"
-              :precision="2"
-              :controls="false"
-              class="w-full!"
-              :aria-label="`第 ${index + 1} 项费用金额`"
-            />
-            <ElButton
-              type="danger"
-              text
-              :aria-label="`移除第 ${index + 1} 项费用`"
-              @click="removeFee(index)"
-            >
-              移除
-            </ElButton>
-          </div>
-        </div>
+        <ArtTable
+          ref="feeTableRef"
+          :data="form.feeItems"
+          :columns="feeColumns"
+          :pagination="false"
+          row-key="expenseId"
+          table-layout="fixed"
+          border
+          show-summary
+          :summary-method="feeSummaryMethod"
+          class="scm-editable-table"
+          empty-text="暂无附加费用"
+          empty-description="点击“添加费用”从当前租户费用清单参选。"
+        />
       </ArtSectionCard>
 
       <div
@@ -95,20 +65,25 @@
   </ArtDialog>
 </template>
 
-<script setup lang="ts">
-  import { ElMessage, type FormRules } from 'element-plus'
+<script setup lang="tsx">
+  import { ElInputNumber, ElMessage, ElOption, ElSelect, type FormRules } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
   import ArtForm, { type FormItem } from '@/components/core/forms/art-form/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
+  import ArtTable, { type ArtTableExpose } from '@/components/core/tables/art-table/index.vue'
+  import ArtIconButton from '@/components/core/widget/art-icon-button/index.vue'
+  import type { ColumnOption } from '@/types'
   import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
   import { formatCurrencyValue } from '@/utils/ui/format'
+  import '../../../scm-editable-table.css'
   import {
     createQuoteCategory,
     fetchQuoteExpenses,
     fetchScmProjectOptions,
     updateQuoteCategory,
     type QuoteCategoryWrite,
+    type QuoteCategoryFee,
     type ScmProjectOption,
     type ScmQuoteCategory,
     type ScmQuoteExpense
@@ -127,6 +102,7 @@
   const { shouldExposeTenantField } = useTenantScopeFormPolicy()
   const dialogRef = ref<ArtDialogExpose<OpenOptions>>()
   const formRef = ref<{ validate: () => Promise<boolean>; clearValidate: () => void }>()
+  const feeTableRef = ref<ArtTableExpose>()
   const recordId = ref<string>()
   const tenantOptions = ref<OpenOptions['tenantOptions']>([])
   const availableProjects = ref<ScmProjectOption[]>([])
@@ -151,6 +127,81 @@
       Number(form.quantity || 0) * Number(form.unitPrice || 0) +
       form.feeItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
   )
+
+  const feeColumns = computed<ColumnOption<QuoteCategoryFee>[]>(() => [
+    {
+      prop: 'expenseId',
+      label: '费用',
+      minWidth: 240,
+      required: true,
+      requiredMessage: ({ rowIndex }) => `第 ${rowIndex + 1} 项附加费用未选择费用类型`,
+      formatter: (row) => (
+        <ElSelect
+          v-model={row.expenseId}
+          filterable
+          loading={referencesLoading.value}
+          placeholder="选择报价费用"
+          class="w-full!"
+          aria-label="附加费用类型"
+        >
+          {availableExpenses.value.map((expense) => (
+            <ElOption
+              key={expense.id}
+              label={`${expense.expenseName}（${expense.expenseCode}）`}
+              value={expense.id}
+              disabled={form.feeItems.some((item) => item !== row && item.expenseId === expense.id)}
+            />
+          ))}
+        </ElSelect>
+      )
+    },
+    {
+      prop: 'amount',
+      label: '金额（元）',
+      width: 165,
+      align: 'right',
+      required: true,
+      rules: {
+        validator: ({ value }) => Number.isFinite(Number(value)) && Number(value) >= 0,
+        message: '附加费用金额不能小于 0'
+      },
+      formatter: (row) => (
+        <ElInputNumber
+          v-model={row.amount}
+          min={0}
+          precision={2}
+          controls={false}
+          class="w-full!"
+          aria-label="附加费用金额"
+        />
+      )
+    },
+    {
+      prop: 'operation',
+      label: '操作',
+      width: 68,
+      align: 'center',
+      formatter: (row) => (
+        <ArtIconButton
+          icon="ri:delete-bin-line"
+          label="移除附加费用"
+          tone="danger"
+          onClick={() => removeFee(form.feeItems.indexOf(row))}
+        />
+      )
+    }
+  ])
+
+  function feeSummaryMethod({ columns }: { columns: Array<{ property?: string }> }): string[] {
+    return columns.map((column, index) => {
+      if (index === 0) return '合计'
+      if (column.property === 'amount')
+        return formatCurrencyValue(
+          form.feeItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+        )
+      return ''
+    })
+  }
 
   const rules = computed<FormRules<QuoteCategoryWrite>>(() => ({
     tenantId: [{ required: true, message: '请选择所属租户', trigger: 'change' }],
@@ -266,6 +317,11 @@
   async function handleSubmit(): Promise<boolean> {
     try {
       if (!(await formRef.value?.validate())) return false
+      const feeValidation = await feeTableRef.value?.validate()
+      if (feeValidation && !feeValidation.valid) {
+        ElMessage.warning(feeValidation.firstError?.message ?? '请完善附加费用')
+        return false
+      }
       if (
         form.feeItems.some(
           (item) => !item.expenseId || !Number.isFinite(item.amount) || item.amount < 0

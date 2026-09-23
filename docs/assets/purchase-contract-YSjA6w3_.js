@@ -1,0 +1,1 @@
+import{Dn as e,fr as t,gn as n}from"./useApi-s_02lHjl-Dgr2dVTV.js";import{t as r}from"./purchase-workspace-0aIRXlFK.js";var i=e({name:`ScmPurchaseContract`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`purchase_contract`}))}});export{i as default};

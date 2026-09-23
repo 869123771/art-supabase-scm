@@ -1,1 +1,0 @@
-import{Cn as e,cr as t,fn as n}from"./useApi-s_02lHjl-neRNQfbk.js";import{t as r}from"./scm-document-workspace-DZVRUa3U.js";var i=e({name:`ScmSalesOrder`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`sales_order`}))}});export{i as default};
