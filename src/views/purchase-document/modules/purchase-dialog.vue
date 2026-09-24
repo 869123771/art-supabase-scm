@@ -2,6 +2,13 @@
   <ArtDialog ref="dialogRef" size="xl">
     <template #subtitle>维护单据表头、物料明细与履约安排；金额由数据库统一核算。</template>
     <div class="flex min-w-0 flex-col gap-4">
+      <ElAlert v-if="initializationError" type="error" :closable="false" show-icon>
+        <template #title>基础数据加载失败</template>
+        <div class="flex flex-wrap items-center gap-2">
+          <span>{{ initializationError }}</span>
+          <ElButton link type="primary" @click="retryOpeningData">重新加载</ElButton>
+        </div>
+      </ElAlert>
       <ElAlert
         v-if="referencesLoaded && header.tenantId && !projects.length"
         type="warning"
@@ -795,8 +802,11 @@
   const activeTab = ref('lines')
   const loading = ref(false)
   const referencesLoaded = ref(false)
+  const initializationError = ref('')
   let preparing = false
   let referenceRevision = 0
+  let openRevision = 0
+  let currentOpenOptions: OpenOptions | undefined
 
   const emptyHeader = (): HeaderModel => ({
     tenantId: '',
@@ -2173,7 +2183,7 @@
     }))
   )
 
-  async function loadReferences(tenantId: string) {
+  async function loadReferences(tenantId: string): Promise<boolean> {
     const revision = ++referenceRevision
     referencesLoaded.value = false
     projects.value = []
@@ -2189,7 +2199,7 @@
     salesContracts.value = []
     salesOrders.value = []
     purchaseContracts.value = []
-    if (!tenantId) return
+    if (!tenantId) return true
     loading.value = true
     try {
       const [
@@ -2244,7 +2254,7 @@
           ? fetchScmSourceOptions('sales_order', tenantId)
           : Promise.resolve(null)
       ])
-      if (revision !== referenceRevision) return
+      if (revision !== referenceRevision) return false
       projects.value = projectResult
       suppliers.value = supplierResult.data ?? []
       materials.value = materialResult.data ?? []
@@ -2317,8 +2327,9 @@
         ])
       )
       referencesLoaded.value = true
+      return true
     } catch {
-      if (revision === referenceRevision) ElMessage.warning('关联主数据加载失败，请稍后重试')
+      return false
     } finally {
       if (revision === referenceRevision) loading.value = false
     }
@@ -3057,6 +3068,10 @@
     return true
   }
   async function handleSubmit() {
+    if (initializationError.value || !referencesLoaded.value) {
+      ElMessage.warning('基础数据尚未加载完成，请重新加载后再创建单据')
+      return false
+    }
     try {
       if (!(await headerFormRef.value?.validate())) return false
       const lineValidation = await lineTableRef.value?.validate()
@@ -3102,22 +3117,9 @@
     }
   }
   async function handleOpen(options: OpenOptions) {
-    try {
-      await Promise.all(
-        [
-          'scmContractClause',
-          'scmContractEffectiveness',
-          'scmPurchaseContractStatus',
-          'scmDiscountMode',
-          'scmTaxRate',
-          'mdmBusinessOwnerType',
-          'mdmProjectStatus'
-        ].map((code) => userStore.ensureDictLoaded(code))
-      )
-    } catch {
-      ElMessage.warning('采购字典加载失败，请刷新页面重试')
-      return
-    }
+    const revision = ++openRevision
+    currentOpenOptions = options
+    initializationError.value = ''
     preparing = true
     kind.value = options.kind
     receiptSourceOrderId.value = ''
@@ -3231,20 +3233,6 @@
         id: options.copy ? crypto.randomUUID() : item.id
       })) ?? []
     activeTab.value = 'lines'
-    await nextTick()
-    preparing = false
-    await loadReferences(header.tenantId)
-    if (options.generate) {
-      for (const line of lines.value) {
-        if (options.generate === 'batch') {
-          if (
-            materials.value.find((material) => material.id === line.materialId)
-              ?.batchManagementEnabled
-          )
-            await generateBatch(line)
-        } else generateSerial(line)
-      }
-    }
     if (options.initialSource && options.kind === 'purchase_order') {
       header.sourceId = options.initialSource.id
       header.projectId = options.initialSource.projectId ?? ''
@@ -3262,10 +3250,67 @@
           ? `编辑${config.value.title} · ${options.record.documentNo}`
           : `新增${config.value.title}`,
       confirmText: recordId.value ? '保存更改' : '创建单据',
+      loading: true,
+      loadingText: '正在准备采购单据…',
       onConfirm: handleSubmit,
-      onOpen: () => headerFormRef.value?.clearValidate(),
+      onOpen: async (_openData, api) => {
+        preparing = false
+        headerFormRef.value?.clearValidate()
+        await initializeOpeningData(options, api, revision)
+      },
+      onClose: () => {
+        ++openRevision
+        ++referenceRevision
+        loading.value = false
+      },
       dialogProps: { closeOnClickModal: false }
     })
+  }
+
+  async function initializeOpeningData(
+    options: OpenOptions,
+    api: ArtDialogExpose<OpenOptions>,
+    revision: number
+  ): Promise<void> {
+    initializationError.value = ''
+    api.setLoading(true)
+    try {
+      await Promise.all(
+        [
+          'scmContractClause',
+          'scmContractEffectiveness',
+          'scmPurchaseContractStatus',
+          'scmDiscountMode',
+          'scmTaxRate',
+          'mdmBusinessOwnerType',
+          'mdmProjectStatus'
+        ].map((code) => userStore.ensureDictLoaded(code))
+      )
+      if (revision !== openRevision || !api.visible.value) return
+      if (!(await loadReferences(header.tenantId))) {
+        initializationError.value = '关联主数据暂时不可用，请重新加载后继续填写。'
+        return
+      }
+      if (revision !== openRevision || !api.visible.value) return
+      if (options.generate) {
+        for (const line of lines.value) {
+          if (options.generate === 'batch') {
+            if (
+              materials.value.find((material) => material.id === line.materialId)
+                ?.batchManagementEnabled
+            )
+              await generateBatch(line)
+          } else generateSerial(line)
+        }
+      }
+    } catch {
+      if (revision === openRevision) {
+        initializationError.value = '采购基础配置暂时不可用，请重新加载后继续填写。'
+      }
+    } finally {
+      if (revision === openRevision && api.visible.value) api.setLoading(false)
+    }
+    if (revision !== openRevision || !api.visible.value || initializationError.value) return
     if (options.openLineSelector) {
       if (options.kind === 'purchase_order' && header.sourceId) void importSourceLines()
       else if (options.kind === 'purchase_request') void importQuotationLines()
@@ -3273,6 +3318,12 @@
         selectAfterSupplier.value = false
         void importSourceLines()
       }
+    }
+  }
+
+  function retryOpeningData(): void {
+    if (currentOpenOptions && dialogRef.value) {
+      void initializeOpeningData(currentOpenOptions, dialogRef.value, openRevision)
     }
   }
   watch(
