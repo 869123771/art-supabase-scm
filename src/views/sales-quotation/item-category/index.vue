@@ -190,7 +190,16 @@
         </div>
       )
     },
-    { prop: 'categoryName', label: '报价项分类', minWidth: 190, showOverflowTooltip: true },
+    {
+      prop: 'categoryName',
+      label: '报价项分类',
+      minWidth: 190,
+      showOverflowTooltip: true,
+      link: {
+        permission: 'ScmQuoteCategory:View',
+        onClick: (row) => void detailDrawerRef.value?.handleOpen(row)
+      }
+    },
     {
       prop: 'quantity',
       label: '报价数量',

@@ -22,7 +22,38 @@
           label-width="112px"
           :show-reset="false"
           :show-submit="false"
-        />
+        >
+          <template #projectId>
+            <ArtTableSingleSelect
+              v-model="header.projectId"
+              :data="projects"
+              :columns="projectPickerColumns"
+              row-key="id"
+              :label-key="projectPickerLabel"
+              title="参选项目"
+              search-placeholder="搜索项目编号或名称"
+              :disabled="!header.tenantId || Boolean(header.sourceId)"
+              empty-text="暂无可选项目"
+              empty-description="请先在 MDM 项目列表维护项目。"
+              dialog-width="xl"
+            />
+          </template>
+          <template #supplierId>
+            <ArtTableSingleSelect
+              v-model="header.supplierId"
+              :data="suppliers"
+              :columns="supplierPickerColumns"
+              row-key="id"
+              :label-key="supplierPickerLabel"
+              title="参选供应商"
+              search-placeholder="搜索供应商编码或名称"
+              :disabled="!header.tenantId || Boolean(header.sourceId)"
+              empty-text="暂无可选供应商"
+              empty-description="请先在 MDM 供应商主数据中维护供应商。"
+              dialog-width="lg"
+            />
+          </template>
+        </ArtForm>
       </ArtSectionCard>
       <ArtSectionCard
         v-if="config.fields.length"
@@ -65,15 +96,63 @@
               @change="(_, rows) => setEmployeeName('keeper', rows)"
             />
           </template>
+          <template #ownerId>
+            <ArtTableSingleSelect
+              v-if="details.ownerType === 'supplier'"
+              v-model="details.ownerId"
+              :data="suppliers"
+              :columns="supplierPickerColumns"
+              row-key="id"
+              :label-key="supplierPickerLabel"
+              title="参选货主供应商"
+              search-placeholder="搜索供应商编码或名称"
+              :disabled="!header.tenantId"
+            />
+            <ArtTableSingleSelect
+              v-else-if="details.ownerType === 'customer'"
+              v-model="details.ownerId"
+              :data="customers"
+              :columns="customerPickerColumns"
+              row-key="id"
+              :label-key="customerPickerLabel"
+              title="参选货主客户"
+              search-placeholder="搜索客户编码或名称"
+              :disabled="!header.tenantId"
+            />
+            <ElInput v-else model-value="" disabled placeholder="自有无需选择货主" />
+          </template>
         </ArtForm>
       </ArtSectionCard>
       <ElTabs v-model="activeTab" class="min-w-0">
-        <ElTabPane label="物料明细" name="lines">
+        <ElTabPane
+          :label="
+            kind === 'purchase_contract'
+              ? '合同明细'
+              : kind === 'purchase_order'
+                ? '订单物料明细'
+                : kind === 'receipt_notice'
+                  ? '收料物料明细'
+                  : '物料明细'
+          "
+          name="lines"
+        >
           <ArtSectionCard
-            title="物料明细"
-            subtitle="可多选物料；选单时按剩余数量筛选来源明细。"
-            :empty="!lines.length"
-            empty-title="暂无物料明细"
+            :title="
+              kind === 'purchase_contract'
+                ? '合同明细'
+                : kind === 'purchase_order'
+                  ? '订单物料明细'
+                  : kind === 'receipt_notice'
+                    ? '收料物料明细'
+                    : '物料明细'
+            "
+            :subtitle="
+              kind === 'purchase_contract'
+                ? '参选报价明细或批量添加物料；金额随输入实时核算。'
+                : '可多选物料；选单时按剩余数量筛选来源明细。'
+            "
+            :empty="kind !== 'purchase_contract' && !lines.length"
+            :empty-title="kind === 'purchase_contract' ? '暂无合同明细' : '暂无物料明细'"
             :empty-description="
               materials.length
                 ? '选择来源单据或添加物料后开始填写。'
@@ -86,24 +165,59 @@
               <div class="flex flex-wrap gap-2">
                 <ElButton
                   v-if="kind === 'purchase_order' || kind === 'receipt_notice'"
-                  :disabled="!header.sourceId || Boolean(recordId)"
-                  @click="importSourceLines"
-                  ><ArtSvgIcon icon="ri:file-list-3-line" />选择来源明细</ElButton
+                  :disabled="kind === 'purchase_order' ? !header.projectId : !header.supplierId"
+                  @click="kind === 'purchase_order' ? importQuotationLines() : importSourceLines()"
+                  ><ArtSvgIcon icon="ri:file-list-3-line" />{{
+                    kind === 'receipt_notice' ? '参选采购订单' : '选单'
+                  }}</ElButton
                 >
                 <ElButton
                   v-if="kind === 'purchase_contract' || kind === 'purchase_request'"
                   :disabled="!header.projectId"
                   @click="importQuotationLines"
-                  ><ArtSvgIcon icon="ri:file-search-line" />选销售报价</ElButton
+                  ><ArtSvgIcon icon="ri:file-search-line" />{{
+                    kind === 'purchase_contract' ? '参选报价明细' : '选单'
+                  }}</ElButton
                 >
                 <ElButton
-                  v-if="config.permissions.RecentPrice"
+                  v-if="kind !== 'receipt_notice' && config.permissions.RecentPrice"
                   v-auth="config.permissions.RecentPrice"
                   :disabled="!lines.length"
                   @click="applyRecentPrices"
                   ><ArtSvgIcon icon="ri:price-tag-3-line" />获取最近采购价</ElButton
                 >
+                <ArtMaterialSelect
+                  v-if="
+                    kind === 'purchase_contract' ||
+                    kind === 'purchase_request' ||
+                    kind === 'purchase_order' ||
+                    kind === 'receipt_notice'
+                  "
+                  class="w-auto!"
+                  v-model:model-values="selectedMaterialIds"
+                  multiple
+                  reset-draft-on-open
+                  :api-fn="materialPickerApi"
+                  :categories="materialCategories"
+                  :title="kind === 'purchase_contract' ? '添加物料' : '参选物料'"
+                  :subtitle="
+                    kind === 'purchase_contract'
+                      ? '按物料分类筛选，选择后批量带入合同明细与基本单位。'
+                      : '按物料分类筛选，选择后批量带入物料明细。'
+                  "
+                  :disabled="!header.tenantId"
+                  @confirm="addContractMaterials"
+                >
+                  <template #trigger="{ open }">
+                    <ElButton type="primary" plain :disabled="!header.tenantId" @click="open">
+                      <ArtSvgIcon icon="ri:add-line" />{{
+                        kind === 'purchase_contract' ? '添加物料' : '参选物料'
+                      }}
+                    </ElButton>
+                  </template>
+                </ArtMaterialSelect>
                 <ElButton
+                  v-else
                   type="primary"
                   plain
                   :disabled="!header.tenantId || !materials.length"
@@ -135,7 +249,9 @@
           <ArtSectionCard
             title="付款计划"
             subtitle="按比例或金额安排应付款，切换方式时自动换算。"
-            :empty="!paymentPlans.length"
+            :empty="
+              kind !== 'purchase_contract' && kind !== 'purchase_order' && !paymentPlans.length
+            "
             empty-title="暂无付款计划"
             empty-description="添加计划后可按比例或金额安排付款。"
             :min-height="144"
@@ -146,68 +262,90 @@
                 ><ArtSvgIcon icon="ri:add-line" />添加计划</ElButton
               ></template
             >
-            <div class="mb-4 flex items-center gap-3 text-sm"
+            <div v-if="kind === 'purchase_contract' || kind === 'purchase_order'" class="min-w-0">
+              <div
+                class="mb-3 flex flex-wrap items-center gap-3 text-sm text-[var(--art-gray-700)]"
+              >
+                <span>按比例（%）</span>
+                <ElSwitch
+                  :model-value="details.paymentMode === 'ratio'"
+                  aria-label="按比例编制付款计划"
+                  @update:model-value="
+                    (enabled) => (details.paymentMode = enabled === true ? 'ratio' : 'amount')
+                  "
+                />
+                <span class="text-xs text-[var(--art-gray-600)]">{{
+                  details.paymentMode === 'ratio'
+                    ? '填写应付比例，自动计算金额'
+                    : '填写应付金额，自动计算比例'
+                }}</span>
+              </div>
+              <ArtTable
+                :data="paymentPlans"
+                :columns="paymentColumns"
+                :pagination="false"
+                row-key="id"
+                table-layout="fixed"
+                border
+                :max-height="380"
+                scrollbar-always-on
+                empty-text="暂无付款计划"
+                empty-description="点击“添加计划”设置每期应付。"
+              />
+            </div>
+            <div v-else class="mb-4 flex items-center gap-3 text-sm"
               ><span>计划方式</span
               ><ElRadioGroup v-model="details.paymentMode">
                 <ElRadioButton label="ratio" value="ratio">按比例</ElRadioButton
                 ><ElRadioButton label="amount" value="amount">按金额</ElRadioButton>
               </ElRadioGroup></div
             >
-            <div
-              v-for="(plan, index) in paymentPlans"
-              :key="plan.id"
-              class="mb-3 grid grid-cols-1 gap-3 rounded-lg border border-[var(--el-border-color-light)] p-3 sm:grid-cols-2 xl:grid-cols-5"
-            >
-              <ElDatePicker
-                v-model="plan.dueDate"
-                type="date"
-                value-format="YYYY-MM-DD"
-                placeholder="到期日期"
-                class="w-full!"
-              />
-              <ElInputNumber
-                v-model="plan.ratio"
-                :min="0"
-                :max="100"
-                :precision="2"
-                :controls="false"
-                :disabled="details.paymentMode !== 'ratio'"
-                class="w-full!"
-                aria-label="应付比例"
-              />
-              <ElInputNumber
-                v-model="plan.amount"
-                :min="0"
-                :precision="2"
-                :controls="false"
-                :disabled="details.paymentMode === 'ratio'"
-                class="w-full!"
-                aria-label="应付金额"
-              />
-              <ElCheckbox v-model="plan.isAdvance">预付</ElCheckbox>
-              <ArtIconButton
-                icon="ri:delete-bin-line"
-                label="移除付款计划"
-                tone="danger"
-                @click="paymentPlans.splice(index, 1)"
-              />
-              <template v-if="kind === 'purchase_order'">
-                <ElInput v-model="plan.contractNo" placeholder="采购合同号" />
-                <ElInputNumber
-                  v-model="plan.contractLine"
-                  :min="1"
-                  :precision="0"
-                  :controls="false"
+            <template v-if="kind !== 'purchase_contract' && kind !== 'purchase_order'">
+              <div
+                v-for="(plan, index) in paymentPlans"
+                :key="plan.id"
+                class="mb-3 grid grid-cols-1 gap-3 rounded-lg border border-[var(--el-border-color-light)] p-3 sm:grid-cols-2 xl:grid-cols-5"
+              >
+                <ElDatePicker
+                  v-model="plan.dueDate"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  placeholder="到期日期"
                   class="w-full!"
-                  aria-label="合同行号"
                 />
-              </template>
-              <ElInput
-                v-model="plan.remark"
-                placeholder="计划备注"
-                class="sm:col-span-2 xl:col-span-5"
-              />
-            </div>
+                <ElInputNumber
+                  v-model="plan.ratio"
+                  :min="0"
+                  :max="100"
+                  :precision="2"
+                  :controls="false"
+                  :disabled="details.paymentMode !== 'ratio'"
+                  class="w-full!"
+                  aria-label="应付比例"
+                />
+                <ElInputNumber
+                  v-model="plan.amount"
+                  :min="0"
+                  :precision="2"
+                  :controls="false"
+                  :disabled="details.paymentMode === 'ratio'"
+                  class="w-full!"
+                  aria-label="应付金额"
+                />
+                <ElCheckbox v-model="plan.isAdvance">预付</ElCheckbox>
+                <ArtIconButton
+                  icon="ri:delete-bin-line"
+                  label="移除付款计划"
+                  tone="danger"
+                  @click="paymentPlans.splice(index, 1)"
+                />
+                <ElInput
+                  v-model="plan.remark"
+                  placeholder="计划备注"
+                  class="sm:col-span-2 xl:col-span-5"
+                />
+              </div>
+            </template>
           </ArtSectionCard>
         </ElTabPane>
         <ElTabPane v-if="config.tabs.includes('deliveries')" label="交货计划" name="deliveries">
@@ -224,7 +362,21 @@
                 ><ArtSvgIcon icon="ri:add-line" />添加计划</ElButton
               ></template
             >
+            <ArtTable
+              v-if="kind === 'purchase_order'"
+              :data="deliveryPlans"
+              :columns="deliveryColumns"
+              :pagination="false"
+              row-key="id"
+              table-layout="fixed"
+              border
+              :max-height="380"
+              scrollbar-always-on
+              empty-text="暂无交货计划"
+              empty-description="点击“添加计划”，再参选订单物料明细。"
+            />
             <div
+              v-else
               v-for="(plan, index) in deliveryPlans"
               :key="plan.id"
               class="mb-3 rounded-lg border border-[var(--el-border-color-light)] p-3"
@@ -294,7 +446,7 @@
         <ElTabPane v-if="config.tabs.includes('clauses')" label="合同条款" name="clauses">
           <ArtSectionCard
             title="合同条款"
-            :empty="!clauses.length"
+            :empty="kind !== 'purchase_contract' && !clauses.length"
             empty-title="暂无合同条款"
             empty-description="添加条款后明确双方的履约约定。"
             :min-height="144"
@@ -305,7 +457,21 @@
                 ><ArtSvgIcon icon="ri:add-line" />添加条款</ElButton
               ></template
             >
+            <ArtTable
+              v-if="kind === 'purchase_contract'"
+              :data="clauses"
+              :columns="clauseColumns"
+              :pagination="false"
+              row-key="id"
+              table-layout="fixed"
+              border
+              :max-height="420"
+              scrollbar-always-on
+              empty-text="暂无合同条款"
+              empty-description="点击“添加条款”选择字典条款并填写内容。"
+            />
             <div
+              v-else
               v-for="(clause, index) in clauses"
               :key="clause.id"
               class="mb-3 flex flex-col gap-3 rounded-lg border border-[var(--el-border-color-light)] p-3"
@@ -349,7 +515,7 @@
       </div>
     </div>
   </ArtDialog>
-  <ArtDialog ref="materialDialogRef" size="md">
+  <ArtDialog v-if="kind === 'receipt_notice'" ref="materialDialogRef" size="md">
     <div class="mb-3 text-sm text-[var(--art-gray-600)]">选择同一租户的物料，可一次添加多项。</div>
     <ElSelect
       v-model="selectedMaterialIds"
@@ -366,16 +532,48 @@
       />
     </ElSelect>
   </ArtDialog>
-  <ArtDialog ref="quotationDialogRef" size="md">
-    <div class="mb-3 text-sm text-[var(--art-gray-600)]">仅显示当前项目的已生效销售报价物料。</div>
-    <ElSelect v-model="selectedQuotationId" filterable class="w-full!" placeholder="选择销售报价单">
-      <ElOption
-        v-for="quotation in eligibleQuotations"
-        :key="quotation.id"
-        :label="quotation.documentNo"
-        :value="quotation.id"
+  <ArtDialog ref="quotationDialogRef" :size="kind === 'receipt_notice' ? 'md' : 'xl'">
+    <template v-if="kind !== 'receipt_notice'">
+      <ElInput
+        v-model="quotationKeyword"
+        clearable
+        placeholder="搜索来源单号、物料编码或描述"
+        aria-label="搜索报价明细"
+        class="mb-3"
       />
-    </ElSelect>
+      <ArtTable
+        :data="filteredQuotationLines"
+        :columns="quotationColumns"
+        :pagination="false"
+        row-key="choiceId"
+        border
+        :max-height="420"
+        empty-text="暂无可参选的来源明细"
+        empty-description="请先确认当前项目已有生效的采购合同或销售报价。"
+        @selection-change="selectQuotationLines"
+      />
+      <p class="mt-3 text-xs text-[var(--art-gray-600)]"
+        >已选 {{ selectedQuotationLines.length }} 行 · 最多 200 行</p
+      >
+    </template>
+    <template v-else>
+      <div class="mb-3 text-sm text-[var(--art-gray-600)]"
+        >仅显示当前项目的已生效销售报价物料。</div
+      >
+      <ElSelect
+        v-model="selectedQuotationId"
+        filterable
+        class="w-full!"
+        placeholder="选择销售报价单"
+      >
+        <ElOption
+          v-for="quotation in eligibleQuotations"
+          :key="quotation.id"
+          :label="quotation.documentNo"
+          :value="quotation.id"
+        />
+      </ElSelect>
+    </template>
   </ArtDialog>
   <ArtDialog ref="sourceLineDialogRef" size="lg">
     <div class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -406,24 +604,48 @@
     >
       <ElCheckbox
         v-for="line in filteredSourceLines"
-        :key="line.sourceLineId"
-        :value="line.sourceLineId"
+        :key="line.choiceId || line.sourceLineId"
+        :value="line.choiceId || line.sourceLineId"
         class="h-auto! w-full! rounded-lg border border-[var(--el-border-color-light)] p-3!"
       >
         <div class="min-w-0 whitespace-normal">
           <strong class="block break-words">{{ line.materialDescription }}</strong>
           <span class="text-xs text-[var(--art-gray-600)]">
+            {{ line.sourceDocumentNo
+            }}<span v-if="line.sourceLineNo"> · 第 {{ line.sourceLineNo }} 行</span> ·
             {{ line.materialCode }} · 可转换 {{ line.quantity }} {{ line.unit }}
+            <span v-if="line.projectName"> · {{ line.projectName }}</span>
             <span v-if="line.needDate"> · 需求 {{ line.needDate }}</span>
           </span>
         </div>
       </ElCheckbox>
     </ElCheckboxGroup>
   </ArtDialog>
+  <ArtTableMultipleSelect
+    v-if="kind === 'receipt_notice'"
+    ref="receiptOrderSelectRef"
+    v-model="selectedSourceLineIds"
+    :data="availableSourceLines"
+    :columns="receiptOrderColumns"
+    row-key="choiceId"
+    label-key="materialDescription"
+    title="参选采购订单"
+    subtitle="按供应商筛选未交完的已审核采购订单，可跨订单多选明细。"
+    search-placeholder="搜索订单编号、项目或物料"
+    :show-pagination="false"
+    reset-draft-on-open
+    dialog-width="xl"
+    empty-text="暂无可参选的采购订单明细"
+    empty-description="请先确认供应商，再检查采购订单的审核状态与剩余交货数量。"
+    @confirm="confirmReceiptOrderLines"
+  >
+    <template #trigger><span class="sr-only">参选采购订单</span></template>
+  </ArtTableMultipleSelect>
 </template>
 
 <script setup lang="tsx">
   import dayjs from 'dayjs'
+  import { omit, uniq } from 'lodash-es'
   import {
     ElButton,
     ElCheckbox,
@@ -439,11 +661,18 @@
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
   import ArtForm from '@/components/core/forms/art-form/index.vue'
   import type { FormItem } from '@/components/core/forms/art-form/index.vue'
+  import ArtTableSingleSelect from '@/components/core/forms/art-data-select/table-single.vue'
+  import ArtTableMultipleSelect from '@/components/core/forms/art-data-select/table-multiple.vue'
+  import type { DataSelectColumn } from '@/components/core/forms/art-data-select/types'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import ArtTable, { type ArtTableExpose } from '@/components/core/tables/art-table/index.vue'
   import ArtIconButton from '@/components/core/widget/art-icon-button/index.vue'
   import ArtEmployeeSelect from '@/components/business/art-employee-select/index.vue'
+  import ArtMaterialSelect, {
+    type MaterialSelectRecord
+  } from '@/components/business/art-material-select/index.vue'
   import type { ColumnOption } from '@/types'
+  import type { DataSelectFetchParams } from '@/components/core/forms/art-data-select/types'
   import type { EmployeeIntegrationItem } from '@/api/integration/employees'
   import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
   import { useAuth } from '@/hooks/core/useAuth'
@@ -453,17 +682,32 @@
     createScmPurchaseDocument,
     fetchScmDocumentTypeOptions,
     fetchScmMaterialOptions,
+    fetchScmPurchaseMaterialCandidates,
+    fetchScmPurchaseMaterialCategories,
+    fetchScmPurchaseWarehouseOptions,
+    fetchScmPurchaseBinOptions,
+    fetchScmPurchaseCustomerOptions,
+    fetchScmReceiptBatchOptions,
+    fetchScmPurchaseProjectOptions,
     fetchScmPurchaseMenuIds,
-    fetchScmProjectOptions,
     fetchScmPurchaseRemainingLines,
+    generateScmReceiptBatchNo,
+    fetchScmReceiptOrderLineChoices,
     fetchScmPurchaseSourceOptions,
     fetchScmRecentPurchasePrices,
     fetchScmSourceOptions,
     fetchScmSupplierOptions,
     updateScmPurchaseDocument,
     type ScmDocumentTypeOption,
+    type ScmDocumentLine,
     type ScmMaterialOption,
-    type ScmProjectOption,
+    type ScmPurchaseMaterialCandidate,
+    type ScmPurchaseMaterialCategory,
+    type ScmPurchaseProjectOption,
+    type ScmReceiptOrderLineChoice,
+    type ScmPurchaseWarehouseOption,
+    type ScmPurchaseBinOption,
+    type ScmPurchaseCustomerOption,
     type ScmPurchaseClause,
     type ScmPurchaseDeliveryPlan,
     type ScmPurchaseDetails,
@@ -483,6 +727,8 @@
     record?: ScmPurchaseDocument
     copy?: boolean
     generate?: 'batch' | 'serial'
+    initialSource?: ScmPurchaseDocument
+    openLineSelector?: boolean
     tenantOptions: Array<{ label: string; value: string }>
     effectiveTenantId: string | null
   }
@@ -507,24 +753,45 @@
   const materialDialogRef = ref<ArtDialogExpose>()
   const quotationDialogRef = ref<ArtDialogExpose>()
   const sourceLineDialogRef = ref<ArtDialogExpose>()
+  const receiptOrderSelectRef = ref<{ open: () => Promise<void> }>()
   const headerFormRef = ref<{ validate: () => Promise<boolean>; clearValidate: () => void }>()
   const lineTableRef = ref<ArtTableExpose>()
   const kind = ref<ScmPurchaseKind>('purchase_contract')
   const config = computed(() => purchaseConfigs[kind.value])
   const recordId = ref<string>()
   const tenantOptions = ref<OpenOptions['tenantOptions']>([])
-  const projects = ref<ScmProjectOption[]>([])
+  const projects = ref<ScmPurchaseProjectOption[]>([])
   const suppliers = ref<ScmSupplierOption[]>([])
   const materials = ref<ScmMaterialOption[]>([])
+  const materialCategories = ref<ScmPurchaseMaterialCategory[]>([])
+  const warehouses = ref<ScmPurchaseWarehouseOption[]>([])
+  const bins = ref<ScmPurchaseBinOption[]>([])
+  const customers = ref<ScmPurchaseCustomerOption[]>([])
   const documentTypes = ref<ScmDocumentTypeOption[]>([])
   const sourceDocuments = ref<ScmPurchaseDocument[]>([])
   const quotations = ref<ScmSalesDocument[]>([])
+  const salesContracts = ref<ScmSalesDocument[]>([])
+  const salesOrders = ref<ScmSalesDocument[]>([])
+  const purchaseContracts = ref<ScmPurchaseDocument[]>([])
   const selectedMaterialIds = ref<string[]>([])
   const selectedQuotationId = ref('')
-  const availableSourceLines = ref<ScmPurchaseLine[]>([])
+  interface QuotationLineChoice extends ScmDocumentLine {
+    choiceId: string
+    documentNo: string
+    sourceKind: string
+    sourceSalesDocumentId?: string
+    sourcePurchaseDocumentId?: string
+    sourcePurchaseRequestId?: string
+    selectedLineNo: number
+  }
+  const quotationKeyword = ref('')
+  const selectedQuotationLines = ref<QuotationLineChoice[]>([])
+  const availableSourceLines = ref<Array<ScmPurchaseLine & Partial<ScmReceiptOrderLineChoice>>>([])
   const selectedSourceLineIds = ref<string[]>([])
   const sourceLineKeyword = ref('')
   const sourceLineDateRange = ref<string[]>([])
+  const selectAfterSupplier = ref(false)
+  const receiptSourceOrderId = ref('')
   const activeTab = ref('lines')
   const loading = ref(false)
   const referencesLoaded = ref(false)
@@ -558,6 +825,206 @@
       (item) => item.projectId === header.projectId && item.status === 'effective'
     )
   )
+  const eligibleSalesSources = computed(() =>
+    kind.value === 'purchase_request' || kind.value === 'purchase_order'
+      ? [
+          ...eligibleQuotations.value,
+          ...salesContracts.value.filter(
+            (item) => item.projectId === header.projectId && item.status === 'effective'
+          ),
+          ...(kind.value === 'purchase_order'
+            ? salesOrders.value.filter(
+                (item) =>
+                  item.projectId === header.projectId &&
+                  ['approved', 'effective'].includes(item.status)
+              )
+            : [])
+        ]
+      : eligibleQuotations.value
+  )
+  const eligiblePurchaseContracts = computed(() =>
+    kind.value === 'purchase_request' || kind.value === 'purchase_order'
+      ? purchaseContracts.value.filter(
+          (item) => item.projectId === header.projectId && item.status === 'effective'
+        )
+      : []
+  )
+  const eligiblePurchaseRequests = computed(() =>
+    kind.value === 'purchase_order'
+      ? sourceDocuments.value.filter(
+          (item) => item.projectId === header.projectId && item.kind === 'purchase_request'
+        )
+      : []
+  )
+  const quotationColumns: ColumnOption<QuotationLineChoice>[] = [
+    { type: 'selection', width: 48 },
+    { prop: 'sourceKind', label: '来源类型', width: 105 },
+    { prop: 'documentNo', label: '来源单号', minWidth: 160 },
+    { prop: 'selectedLineNo', label: '源行号', width: 95 },
+    { prop: 'materialCode', label: '物料编码', minWidth: 150 },
+    { prop: 'materialDescription', label: '物料描述', minWidth: 220, showOverflowTooltip: true },
+    { prop: 'quantity', label: '来源数量', width: 105, align: 'right' }
+  ]
+  const filteredQuotationLines = computed(() => {
+    const purchaseIds = new Set(
+      materials.value.filter((item) => item.materialSource === 'purchase').map((item) => item.id)
+    )
+    const keyword = quotationKeyword.value.trim().toLocaleLowerCase()
+    const salesLines = eligibleSalesSources.value.flatMap((quotation) =>
+      quotation.lines
+        .filter((line) => purchaseIds.has(line.materialId))
+        .map((line, index) => ({
+          ...line,
+          choiceId: `${quotation.id}:${line.lineId || index}`,
+          documentNo: quotation.documentNo,
+          sourceKind:
+            quotation.kind === 'sales_order'
+              ? '销售订单'
+              : quotation.kind === 'sales_contract'
+                ? '销售合同'
+                : '销售报价',
+          sourceSalesDocumentId: quotation.id,
+          selectedLineNo: line.lineNo ?? (index + 1) * 10
+        }))
+    )
+    const contractLines: QuotationLineChoice[] = eligiblePurchaseContracts.value.flatMap(
+      (contract) =>
+        contract.lines
+          .filter((line) => purchaseIds.has(line.materialId))
+          .map((line, index) => ({
+            lineId: line.lineId,
+            materialId: line.materialId,
+            materialCode: line.materialCode,
+            materialDescription: line.materialDescription,
+            specification: line.specification,
+            salesUnit: line.unit,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            taxRate: line.taxRate,
+            choiceId: `${contract.id}:${line.lineId || index}`,
+            documentNo: contract.documentNo,
+            sourceKind: '采购合同',
+            sourcePurchaseDocumentId: contract.id,
+            selectedLineNo: line.lineNo ?? (index + 1) * 10
+          }))
+    )
+    const requestLines: QuotationLineChoice[] = eligiblePurchaseRequests.value.flatMap((request) =>
+      request.lines
+        .map((line, index) => ({
+          lineId: line.lineId,
+          materialId: line.materialId,
+          materialCode: line.materialCode,
+          materialDescription: line.materialDescription,
+          specification: line.specification,
+          salesUnit: line.unit,
+          quantity: Number(line.remainingQuantity ?? line.quantity),
+          unitPrice: line.unitPrice,
+          taxRate: line.taxRate,
+          choiceId: `${request.id}:${line.lineId || index}`,
+          documentNo: request.documentNo,
+          sourceKind: '采购申请',
+          sourcePurchaseRequestId: request.id,
+          selectedLineNo: line.lineNo ?? (index + 1) * 10
+        }))
+        .filter((line) => line.quantity > 0)
+    )
+    return [...salesLines, ...contractLines, ...requestLines].filter(
+      (line) =>
+        !keyword ||
+        `${line.documentNo} ${line.materialCode} ${line.materialDescription}`
+          .toLocaleLowerCase()
+          .includes(keyword)
+    )
+  })
+  function selectQuotationLines(rows: QuotationLineChoice[]): void {
+    selectedQuotationLines.value = rows
+  }
+  const projectPickerColumns: DataSelectColumn[] = [
+    { prop: 'projectCode', label: '项目编码', minWidth: 150 },
+    { prop: 'projectName', label: '项目名称', minWidth: 230 },
+    { prop: 'customer.customerName', label: '客户', minWidth: 160 },
+    { prop: 'salesperson.employeeName', label: '销售员', minWidth: 120 },
+    { prop: 'owner.employeeName', label: '负责人', minWidth: 120 },
+    {
+      prop: 'projectStatus',
+      label: '项目状态',
+      minWidth: 110,
+      formatter: (row) =>
+        userStore.getDictMap?.mdmProjectStatus?.find((item) => item.value === row.projectStatus)
+          ?.label ||
+        row.projectStatus ||
+        '—'
+    }
+  ]
+  const projectPickerLabel = (row: { projectCode?: string; projectName?: string }): string =>
+    `${row.projectName || '未命名项目'}（${row.projectCode || '无编码'}）`
+  const supplierPickerColumns: DataSelectColumn[] = [
+    { prop: 'supplierCode', label: '供应商编码', minWidth: 150 },
+    { prop: 'supplierName', label: '供应商全称', minWidth: 260 }
+  ]
+  const receiptOrderColumns: DataSelectColumn[] = [
+    { prop: 'sourceDocumentNo', label: '采购订单号', minWidth: 170 },
+    { prop: 'sourceLineNo', label: '订单行号', width: 90 },
+    { prop: 'projectName', label: '项目名称', minWidth: 145 },
+    { prop: 'materialCode', label: '物料编码', minWidth: 125 },
+    { prop: 'materialDescription', label: '物料名称', minWidth: 190 },
+    { prop: 'quantity', label: '未交数量', minWidth: 105 },
+    { prop: 'unit', label: '单位', width: 80 }
+  ]
+  const supplierPickerLabel = (row: { supplierCode?: string; supplierName?: string }): string =>
+    `${row.supplierName || '未命名供应商'}（${row.supplierCode || '无编码'}）`
+  const customerPickerColumns: DataSelectColumn[] = [
+    { prop: 'customerCode', label: '客户编码', minWidth: 150 },
+    { prop: 'customerName', label: '客户名称', minWidth: 260 }
+  ]
+  const customerPickerLabel = (row: { customerCode?: string; customerName?: string }): string =>
+    `${row.customerName || '未命名客户'}（${row.customerCode || '无编码'}）`
+  const batchPickerColumns: DataSelectColumn[] = [
+    { prop: 'batchNo', label: '批号', minWidth: 190 },
+    { prop: 'quantity', label: '现存数量', minWidth: 120 },
+    { prop: 'receivedAt', label: '首次入库时间', minWidth: 180 }
+  ]
+  async function batchPickerApi(line: ScmPurchaseLine, params: DataSelectFetchParams) {
+    if (!header.tenantId || !line.materialId) return { data: [], total: 0 }
+    return fetchScmReceiptBatchOptions(header.tenantId, line.materialId, {
+      keyword: params.keyword,
+      warehouseId: line.warehouseId,
+      ownerType: line.ownerType,
+      ownerId: line.ownerId
+    })
+  }
+  async function materialPickerApi(params: DataSelectFetchParams) {
+    if (!header.tenantId) return { data: [], total: 0 }
+    const selectedCategory = String(params.filters.categoryId || '')
+    const categoryIds = selectedCategory
+      ? (() => {
+          const ids = [selectedCategory]
+          for (let index = 0; index < ids.length; index++)
+            ids.push(
+              ...materialCategories.value
+                .filter((category) => category.parentId === ids[index])
+                .map((category) => category.id)
+            )
+          return ids
+        })()
+      : undefined
+    const result = await fetchScmPurchaseMaterialCandidates(header.tenantId, {
+      keyword: params.keyword,
+      categoryIds,
+      from: (params.page - 1) * params.pageSize,
+      to: params.page * params.pageSize - 1
+    })
+    const names = new Map(
+      materialCategories.value.map((category) => [category.id, category.categoryName])
+    )
+    return {
+      ...result,
+      data: result.data.map((material) => ({
+        ...material,
+        category: { categoryName: names.get(material.categoryId || '') || '未分类' }
+      }))
+    }
+  }
   const filteredSourceLines = computed(() => {
     const source = sourceDocuments.value.find((item) => item.id === header.sourceId)
     const keyword = sourceLineKeyword.value.trim().toLocaleLowerCase()
@@ -571,7 +1038,9 @@
         line.materialDescription,
         source?.project?.projectName,
         source?.details.buyerName,
-        source?.details.applicantName
+        source?.details.applicantName,
+        line.sourceDocumentNo,
+        line.projectName
       ].some((value) => value?.toLocaleLowerCase().includes(keyword))
     })
   })
@@ -583,6 +1052,14 @@
     return lineSubtotal(line) + lineTaxAmount(line)
   }
   function lineSubtotal(line: ScmPurchaseLine) {
+    if (line.gift) return 0
+    if (kind.value === 'purchase_order')
+      return (
+        Math.round(
+          (Number(line.quantity || 0) * Number(line.unitPrice || 0) - lineDiscountAmount(line)) *
+            100
+        ) / 100
+      )
     return (
       Math.round(
         Number(line.quantity || 0) *
@@ -593,6 +1070,13 @@
     )
   }
   function lineDiscountAmount(line: ScmPurchaseLine) {
+    if (line.gift) return 0
+    if (kind.value === 'purchase_order')
+      return (
+        Math.round(
+          Number(line.quantity || 0) * lineTaxedUnitPrice(line) * Number(line.discountRate || 0)
+        ) / 100
+      )
     return (
       Math.round(
         Number(line.quantity || 0) * Number(line.unitPrice || 0) * Number(line.discountRate || 0)
@@ -600,6 +1084,13 @@
     )
   }
   function lineTaxAmount(line: ScmPurchaseLine) {
+    if (line.gift) return 0
+    if (kind.value === 'purchase_order')
+      return (
+        Math.round(
+          Number(line.quantity || 0) * Number(line.unitPrice || 0) * Number(line.taxRate || 0)
+        ) / 100
+      )
     return (
       Math.round(
         Number(line.quantity || 0) *
@@ -610,12 +1101,288 @@
     )
   }
   function lineTaxedUnitPrice(line: ScmPurchaseLine) {
+    if (line.gift) return 0
+    if (kind.value === 'purchase_order')
+      return Number(
+        line.taxInclusiveUnitPrice ??
+          Math.round(Number(line.unitPrice || 0) * (1 + Number(line.taxRate || 0) / 100) * 10000) /
+            10000
+      )
     return (
       Number(line.unitPrice || 0) *
       (1 - Number(line.discountRate || 0) / 100) *
       (1 + Number(line.taxRate || 0) / 100)
     )
   }
+  function updateTaxInclusiveUnitPrice(line: ScmPurchaseLine): void {
+    line.taxInclusiveUnitPrice =
+      Math.round(Number(line.unitPrice || 0) * (1 + Number(line.taxRate || 0) / 100) * 10000) /
+      10000
+  }
+  function updateUnitPriceFromTaxInclusive(line: ScmPurchaseLine): void {
+    line.unitPrice =
+      Math.round(
+        (Number(line.taxInclusiveUnitPrice || 0) / (1 + Number(line.taxRate || 0) / 100)) * 10000
+      ) / 10000
+  }
+
+  const paymentColumns = computed<ColumnOption<ScmPurchasePaymentPlan>[]>(() => [
+    { type: 'globalIndex', label: '序号', width: 65 },
+    ...(kind.value === 'purchase_order'
+      ? ([
+          {
+            prop: 'contractNo',
+            label: '合同编号',
+            minWidth: 170,
+            formatter: (row: ScmPurchasePaymentPlan) => (
+              <ElInput v-model={row.contractNo} maxlength={80} placeholder="采购合同号" />
+            )
+          }
+        ] as ColumnOption<ScmPurchasePaymentPlan>[])
+      : []),
+    {
+      prop: 'isAdvance',
+      label: '是否预付',
+      width: 100,
+      align: 'center',
+      formatter: (row) => <ElCheckbox v-model={row.isAdvance} aria-label="是否预付" />
+    },
+    {
+      prop: 'dueDate',
+      label: '到期日',
+      width: 175,
+      formatter: (row) => (
+        <ElDatePicker
+          v-model={row.dueDate}
+          type="date"
+          value-format="YYYY-MM-DD"
+          placeholder="选择日期"
+          class="w-full!"
+          aria-label="付款到期日"
+        />
+      )
+    },
+    {
+      prop: 'ratio',
+      label: '应付比例（%）',
+      width: 150,
+      align: 'right',
+      formatter: (row) => (
+        <ElInputNumber
+          v-model={row.ratio}
+          min={0}
+          max={100}
+          precision={2}
+          controls={false}
+          disabled={details.paymentMode !== 'ratio'}
+          class="w-full!"
+          aria-label="应付比例"
+        />
+      )
+    },
+    {
+      prop: 'amount',
+      label: '应付金额（元）',
+      width: 170,
+      align: 'right',
+      formatter: (row) => (
+        <ElInputNumber
+          v-model={row.amount}
+          min={0}
+          precision={2}
+          controls={false}
+          disabled={details.paymentMode === 'ratio'}
+          class="w-full!"
+          aria-label="应付金额"
+        />
+      )
+    },
+    {
+      prop: 'remark',
+      label: '备注',
+      minWidth: 170,
+      formatter: (row) => <ElInput v-model={row.remark} maxlength={200} placeholder="可选" />
+    },
+    {
+      prop: 'operation',
+      label: '操作',
+      width: 72,
+      fixed: 'right',
+      formatter: (row) => (
+        <ArtIconButton
+          icon="ri:delete-bin-line"
+          label="移除付款计划"
+          tone="danger"
+          onClick={() => paymentPlans.value.splice(paymentPlans.value.indexOf(row), 1)}
+        />
+      )
+    }
+  ])
+  const deliveryColumns = computed<ColumnOption<ScmPurchaseDeliveryPlan>[]>(() => [
+    { type: 'globalIndex', label: '序号', width: 65 },
+    {
+      prop: 'lineId',
+      label: '订单物料',
+      minWidth: 210,
+      formatter: (row) => (
+        <ElSelect
+          v-model={row.lineId}
+          filterable
+          class="w-full!"
+          placeholder="参选订单物料"
+          onChange={() => fillDeliveryFromLine(row)}
+        >
+          {lines.value.map((line) => (
+            <ElOption
+              key={line.lineId}
+              value={line.lineId}
+              label={`${line.lineNo || '—'} · ${line.materialCode} · ${line.materialDescription}`}
+            />
+          ))}
+        </ElSelect>
+      )
+    },
+    {
+      prop: 'plannedDate',
+      label: '计划交货日期',
+      width: 175,
+      formatter: (row) => (
+        <ElDatePicker
+          v-model={row.plannedDate}
+          type="date"
+          valueFormat="YYYY-MM-DD"
+          class="w-full!"
+          aria-label="计划交货日期"
+        />
+      )
+    },
+    { prop: 'unit', label: '采购单位', width: 100, formatter: (row) => row.unit || '—' },
+    {
+      prop: 'quantity',
+      label: '计划交货数量',
+      width: 145,
+      align: 'right',
+      formatter: (row) => (
+        <ElInputNumber
+          v-model={row.quantity}
+          min={0.001}
+          precision={3}
+          controls={false}
+          class="w-full!"
+          aria-label="计划交货数量"
+          onChange={() => updateDeliveryBaseQuantity(row)}
+        />
+      )
+    },
+    {
+      prop: 'plannedBaseQuantity',
+      label: '计划交货基本数量',
+      width: 145,
+      align: 'right',
+      formatter: (row) => row.plannedBaseQuantity ?? '—'
+    },
+    {
+      prop: 'deliveredQuantity',
+      label: '已交货数量',
+      width: 120,
+      align: 'right',
+      formatter: (row) => Number(row.deliveredQuantity || 0)
+    },
+    {
+      prop: 'remainingQuantity',
+      label: '未交货数量',
+      width: 120,
+      align: 'right',
+      formatter: (row) =>
+        Math.max(0, Number(row.quantity || 0) - Number(row.deliveredQuantity || 0))
+    },
+    {
+      prop: 'recentDeliveryDate',
+      label: '最近交货日期',
+      width: 150,
+      formatter: (row) => row.recentDeliveryDate || '—'
+    },
+    {
+      prop: 'location',
+      label: '交货地点',
+      minWidth: 160,
+      formatter: (row) => (
+        <ElInput v-model={row.location} maxlength={120} placeholder="填写交货地点" />
+      )
+    },
+    {
+      prop: 'address',
+      label: '交货地址',
+      minWidth: 180,
+      formatter: (row) => (
+        <ElInput v-model={row.address} maxlength={200} placeholder="填写详细地址" />
+      )
+    },
+    {
+      prop: 'remark',
+      label: '备注',
+      minWidth: 170,
+      formatter: (row) => <ElInput v-model={row.remark} maxlength={200} placeholder="可选" />
+    },
+    {
+      prop: 'operation',
+      label: '操作',
+      width: 72,
+      fixed: 'right',
+      formatter: (row) => (
+        <ArtIconButton
+          icon="ri:delete-bin-line"
+          label="移除交货计划"
+          tone="danger"
+          onClick={() => deliveryPlans.value.splice(deliveryPlans.value.indexOf(row), 1)}
+        />
+      )
+    }
+  ])
+  const clauseColumns = computed<ColumnOption<ScmPurchaseClause>[]>(() => [
+    { type: 'globalIndex', label: '序号', width: 65 },
+    {
+      prop: 'title',
+      label: '合同条款',
+      width: 230,
+      formatter: (row) => (
+        <ElSelect v-model={row.title} placeholder="参选合同条款" class="w-full!">
+          {clauseOptions.value.map((item) => (
+            <ElOption key={item.value} value={item.value} label={item.label} />
+          ))}
+        </ElSelect>
+      )
+    },
+    {
+      prop: 'content',
+      label: '条款内容',
+      minWidth: 420,
+      formatter: (row) => (
+        <ElInput
+          v-model={row.content}
+          type="textarea"
+          rows={2}
+          maxlength={2000}
+          placeholder="填写条款内容"
+          aria-label="条款内容"
+        />
+      )
+    },
+    {
+      prop: 'operation',
+      label: '操作',
+      width: 72,
+      fixed: 'right',
+      formatter: (row) => (
+        <ArtIconButton
+          icon="ri:delete-bin-line"
+          label="移除合同条款"
+          tone="danger"
+          onClick={() => clauses.value.splice(clauses.value.indexOf(row), 1)}
+        />
+      )
+    }
+  ])
 
   const lineColumns = computed<ColumnOption<ScmPurchaseLine>[]>(() => [
     {
@@ -634,6 +1401,25 @@
               class="w-full!"
             />
           </label>
+          {kind.value === 'purchase_order' && (
+            <>
+              <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+                需求部门
+                <ElInput v-model={row.department} maxlength={120} placeholder="填写需求部门" />
+              </label>
+              <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
+                申请人
+                <ArtEmployeeSelect
+                  v-model={row.applicant}
+                  tenantId={header.tenantId}
+                  placeholder="参选员工"
+                  onChange={(_, rows) => {
+                    row.applicantName = rows[0]?.employeeName || ''
+                  }}
+                />
+              </label>
+            </>
+          )}
           <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
             辅助数量
             <ElInputNumber
@@ -641,12 +1427,18 @@
               min={0}
               precision={3}
               controls={false}
+              disabled={kind.value === 'receipt_notice' || kind.value === 'purchase_order'}
               class="w-full!"
             />
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
             辅助单位
-            <ElInput v-model={row.auxiliaryUnit} maxlength={30} placeholder="可选" />
+            <ElInput
+              v-model={row.auxiliaryUnit}
+              maxlength={30}
+              placeholder="可选"
+              disabled={kind.value === 'receipt_notice' || kind.value === 'purchase_order'}
+            />
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
             辅助数量（2）
@@ -655,41 +1447,92 @@
               min={0}
               precision={3}
               controls={false}
+              disabled={kind.value === 'receipt_notice' || kind.value === 'purchase_order'}
               class="w-full!"
             />
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
             辅助单位（2）
-            <ElInput v-model={row.auxiliaryUnit2} maxlength={30} placeholder="可选" />
+            <ElInput
+              v-model={row.auxiliaryUnit2}
+              maxlength={30}
+              placeholder="可选"
+              disabled={kind.value === 'receipt_notice' || kind.value === 'purchase_order'}
+            />
           </label>
           {(kind.value === 'purchase_order' || kind.value === 'receipt_notice') && (
             <>
               <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
                 仓库
-                <ElInput v-model={row.warehouse} maxlength={80} placeholder="收货仓库" />
+                <ElSelect
+                  v-model={row.warehouseId}
+                  filterable
+                  clearable
+                  placeholder="参选仓库"
+                  class="w-full!"
+                  onChange={() => {
+                    row.binId = undefined
+                    row.location = ''
+                  }}
+                >
+                  {warehouses.value.map((warehouse) => (
+                    <ElOption
+                      key={warehouse.id}
+                      value={warehouse.id}
+                      label={`${warehouse.warehouseCode} · ${warehouse.warehouseName}`}
+                    />
+                  ))}
+                </ElSelect>
               </label>
               <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
                 仓位
-                <ElInput v-model={row.location} maxlength={80} placeholder="收货仓位" />
+                <ElSelect
+                  v-model={row.binId}
+                  filterable
+                  clearable
+                  placeholder="参选仓位"
+                  class="w-full!"
+                  disabled={!row.warehouseId}
+                >
+                  {bins.value
+                    .filter((bin) => bin.warehouseId === row.warehouseId)
+                    .map((bin) => (
+                      <ElOption
+                        key={bin.id}
+                        value={bin.id}
+                        label={`${bin.binCode} · ${bin.binName}`}
+                      />
+                    ))}
+                </ElSelect>
               </label>
             </>
-          )}
-          {kind.value === 'purchase_request' && (
-            <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
-              需求原因
-              <ElInput v-model={row.reason} maxlength={200} placeholder="说明采购用途" />
-            </label>
           )}
           {kind.value === 'receipt_notice' && (
             <>
               <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
                 批号
-                <ElInput v-model={row.batchNo} maxlength={80} placeholder="可手填或生成" />
+                <ArtTableSingleSelect
+                  v-model={row.batchNo}
+                  selectedData={row.batchNo ? [{ batchNo: row.batchNo }] : []}
+                  apiFn={(params: DataSelectFetchParams) => batchPickerApi(row, params)}
+                  columns={batchPickerColumns}
+                  rowKey="batchNo"
+                  labelKey="batchNo"
+                  title="批号主档"
+                  searchPlaceholder="搜索批号"
+                  disabled={!header.tenantId || !row.materialId}
+                  emptyText="暂无现有批号"
+                  emptyDescription="可通过旁边的“生成批号”按物料规则创建新批号。"
+                  dialogWidth="lg"
+                  showPagination={false}
+                />
               </label>
               <div class="flex flex-wrap items-end gap-2">
                 {config.value.permissions.GenerateBatch &&
+                  materials.value.find((material) => material.id === row.materialId)
+                    ?.batchManagementEnabled &&
                   hasAuth(config.value.permissions.GenerateBatch) && (
-                    <ElButton onClick={() => generateBatch(row)}>生成批号</ElButton>
+                    <ElButton onClick={() => void generateBatch(row)}>生成批号</ElButton>
                   )}
                 {config.value.permissions.GenerateSerial &&
                   hasAuth(config.value.permissions.GenerateSerial) && (
@@ -712,6 +1555,30 @@
         </div>
       )
     },
+    ...(kind.value === 'purchase_contract' ||
+    kind.value === 'purchase_request' ||
+    kind.value === 'purchase_order' ||
+    kind.value === 'receipt_notice'
+      ? [
+          {
+            prop: 'lineNo',
+            label: '行号',
+            width: 100,
+            fixed: 'left' as const,
+            required: true,
+            formatter: (row: ScmPurchaseLine) => (
+              <ElInputNumber
+                v-model={row.lineNo}
+                min={1}
+                precision={0}
+                controls={false}
+                class="w-full!"
+                aria-label="明细行号"
+              />
+            )
+          }
+        ]
+      : []),
     {
       prop: 'materialId',
       label: '物料编码',
@@ -768,6 +1635,10 @@
           controls={false}
           class="w-full!"
           aria-label="数量"
+          onChange={() => {
+            recalculateReceiptUnits(row)
+            recalculateOrderUnits(row)
+          }}
         />
       )
     },
@@ -776,15 +1647,173 @@
       label: '采购单位',
       width: 110,
       formatter: (row) => (
-        <ElInput v-model={row.unit} maxlength={30} placeholder="单位" aria-label="采购单位" />
+        <ElInput
+          v-model={row.unit}
+          maxlength={30}
+          placeholder="计量单位"
+          disabled={kind.value === 'purchase_request'}
+          aria-label="采购单位"
+        />
       )
     },
+    ...(kind.value === 'receipt_notice' || kind.value === 'purchase_order'
+      ? [
+          {
+            prop: 'stockUnit',
+            label: '库存单位',
+            width: 110,
+            formatter: (row: ScmPurchaseLine) => row.stockUnit || '—'
+          },
+          {
+            prop: 'baseQuantity',
+            label: '基本数量',
+            width: 115,
+            align: 'right' as const,
+            formatter: (row: ScmPurchaseLine) => row.baseQuantity ?? '—'
+          }
+        ]
+      : []),
+    ...(kind.value === 'purchase_contract' ||
+    kind.value === 'purchase_order' ||
+    kind.value === 'receipt_notice'
+      ? [
+          {
+            prop: 'baseUnit',
+            label: '基本单位',
+            width: 120,
+            formatter: (row: ScmPurchaseLine) => (
+              <ElInput
+                v-model={row.baseUnit}
+                maxlength={30}
+                placeholder="基本单位"
+                aria-label="基本单位"
+                disabled={kind.value === 'receipt_notice' || kind.value === 'purchase_order'}
+              />
+            )
+          }
+        ]
+      : []),
+    ...(kind.value === 'purchase_request'
+      ? ([
+          {
+            prop: 'reason',
+            label: '需求原因',
+            minWidth: 180,
+            formatter: (row: ScmPurchaseLine) => (
+              <ElInput v-model={row.reason} maxlength={200} placeholder="填写需求原因" />
+            )
+          },
+          {
+            prop: 'suggestedSupplierId',
+            label: '建议供应商',
+            minWidth: 195,
+            formatter: (row: ScmPurchaseLine) => (
+              <ElSelect
+                v-model={row.suggestedSupplierId}
+                filterable
+                clearable
+                placeholder="参选供应商"
+                class="w-full!"
+              >
+                {suppliers.value.map((supplier) => (
+                  <ElOption
+                    key={supplier.id}
+                    value={supplier.id}
+                    label={`${supplier.supplierName}（${supplier.supplierCode}）`}
+                  />
+                ))}
+              </ElSelect>
+            )
+          },
+          {
+            prop: 'sourceDocumentNo',
+            label: '源单据',
+            minWidth: 155,
+            showOverflowTooltip: true
+          },
+          {
+            prop: 'sourceLineNo',
+            label: '源单据行号',
+            width: 115
+          }
+        ] as ColumnOption<ScmPurchaseLine>[])
+      : []),
+    ...(kind.value === 'receipt_notice'
+      ? ([
+          { prop: 'sourceDocumentNo', label: '源单据', minWidth: 155, showOverflowTooltip: true },
+          { prop: 'sourceLineNo', label: '源单据行号', width: 115 },
+          {
+            prop: 'ownerType',
+            label: '货主类型',
+            width: 135,
+            formatter: (row: ScmPurchaseLine) => (
+              <ElSelect
+                v-model={row.ownerType}
+                class="w-full!"
+                aria-label="货主类型"
+                onChange={() => {
+                  row.ownerId = undefined
+                }}
+              >
+                <ElOption value="self" label="自有" />
+                <ElOption value="supplier" label="供应商" />
+                <ElOption value="customer" label="客户" />
+              </ElSelect>
+            )
+          },
+          {
+            prop: 'ownerId',
+            label: '货主',
+            minWidth: 180,
+            formatter: (row: ScmPurchaseLine) =>
+              row.ownerType === 'self' || !row.ownerType ? (
+                '—'
+              ) : (
+                <ElSelect
+                  v-model={row.ownerId}
+                  filterable
+                  clearable
+                  class="w-full!"
+                  aria-label="货主"
+                  placeholder="参选货主"
+                >
+                  {(row.ownerType === 'supplier'
+                    ? suppliers.value.map((item) => ({
+                        id: item.id,
+                        label: `${item.supplierCode} · ${item.supplierName}`
+                      }))
+                    : customers.value.map((item) => ({
+                        id: item.id,
+                        label: `${item.customerCode} · ${item.customerName}`
+                      }))
+                  ).map((item) => (
+                    <ElOption key={item.id} value={item.id} label={item.label} />
+                  ))}
+                </ElSelect>
+              )
+          }
+        ] as ColumnOption<ScmPurchaseLine>[])
+      : []),
+    ...(kind.value === 'purchase_order'
+      ? ([
+          {
+            prop: 'contractNo',
+            label: '采购合同编号',
+            minWidth: 165,
+            formatter: (row: ScmPurchaseLine) => (
+              <ElInput v-model={row.contractNo} maxlength={80} placeholder="自动带入或填写" />
+            )
+          },
+          { prop: 'sourceDocumentNo', label: '来源单据', minWidth: 165, showOverflowTooltip: true },
+          { prop: 'sourceLineNo', label: '源行号', width: 95 }
+        ] as ColumnOption<ScmPurchaseLine>[])
+      : []),
     {
       prop: 'unitPrice',
       label: '单价（元）',
       width: 140,
       align: 'right',
-      required: true,
+      required: kind.value !== 'purchase_request' && kind.value !== 'purchase_order',
       rules: {
         validator: ({ value }) => Number.isFinite(Number(value)) && Number(value) >= 0,
         message: '单价不能小于 0'
@@ -793,35 +1822,74 @@
         <ElInputNumber
           v-model={row.unitPrice}
           min={0}
-          precision={2}
+          precision={kind.value === 'purchase_order' ? 4 : 2}
           controls={false}
           class="w-full!"
           aria-label="单价"
+          onChange={() => {
+            if (kind.value === 'purchase_order') updateTaxInclusiveUnitPrice(row)
+          }}
         />
       )
     },
+    ...(kind.value === 'purchase_order'
+      ? ([
+          {
+            prop: 'taxInclusiveUnitPrice',
+            label: '含税单价（元）',
+            width: 155,
+            align: 'right' as const,
+            formatter: (row: ScmPurchaseLine) => (
+              <ElInputNumber
+                v-model={row.taxInclusiveUnitPrice}
+                min={0}
+                precision={4}
+                controls={false}
+                class="w-full!"
+                aria-label="含税单价"
+                onChange={() => updateUnitPriceFromTaxInclusive(row)}
+              />
+            )
+          }
+        ] as ColumnOption<ScmPurchaseLine>[])
+      : []),
     {
       prop: 'taxRate',
       label: '税率（%）',
       width: 120,
       align: 'right',
-      required: true,
+      required: kind.value !== 'purchase_request',
       rules: {
         validator: ({ value }) =>
           Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100,
         message: '税率须为 0–100%'
       },
-      formatter: (row) => (
-        <ElInputNumber
-          v-model={row.taxRate}
-          min={0}
-          max={100}
-          precision={2}
-          controls={false}
-          class="w-full!"
-          aria-label="税率"
-        />
-      )
+      formatter: (row) =>
+        kind.value === 'purchase_request' || kind.value === 'purchase_order' ? (
+          <ElSelect
+            v-model={row.taxRate}
+            placeholder="参选税率"
+            class="w-full!"
+            aria-label="税率"
+            onChange={() => {
+              if (kind.value === 'purchase_order') updateTaxInclusiveUnitPrice(row)
+            }}
+          >
+            {(userStore.getDictMap?.scmTaxRate ?? []).map((item) => (
+              <ElOption key={item.value} value={Number(item.value)} label={item.label} />
+            ))}
+          </ElSelect>
+        ) : (
+          <ElInputNumber
+            v-model={row.taxRate}
+            min={0}
+            max={100}
+            precision={2}
+            controls={false}
+            class="w-full!"
+            aria-label="税率"
+          />
+        )
     },
     {
       prop: 'discountMode',
@@ -833,6 +1901,9 @@
           placeholder="无折扣"
           class="w-full!"
           aria-label="折扣方式"
+          onChange={(value: string) => {
+            if (value === 'none') row.discountRate = 0
+          }}
         >
           {discountOptions.value.map((item) => (
             <ElOption key={item.value} value={item.value} label={item.label} />
@@ -842,7 +1913,7 @@
     },
     {
       prop: 'discountRate',
-      label: '折扣率（%）',
+      label: kind.value === 'purchase_order' ? '单位折扣（率）' : '折扣率（%）',
       width: 135,
       align: 'right',
       formatter: (row) => (
@@ -858,6 +1929,19 @@
         />
       )
     },
+    ...(kind.value === 'purchase_order'
+      ? ([
+          {
+            prop: 'discountAmount',
+            label: '折扣额（元）',
+            width: 135,
+            align: 'right' as const,
+            formatter: (row: ScmPurchaseLine) => (
+              <span class="tabular-nums">{formatCurrencyValue(lineDiscountAmount(row))}</span>
+            )
+          }
+        ] as ColumnOption<ScmPurchaseLine>[])
+      : []),
     {
       prop: 'amount',
       label: '金额（元）',
@@ -922,12 +2006,12 @@
     })
   }
 
-  const headerRules: FormRules<HeaderModel> = {
+  const headerRules = computed<FormRules<HeaderModel>>(() => ({
     tenantId: [{ required: true, message: '请选择所属租户', trigger: 'change' }],
-    documentNo: [{ required: true, message: '请输入单据编号', trigger: 'blur' }],
+    documentNo: [],
     projectId: [{ required: true, message: '请选择项目', trigger: 'change' }],
     documentDate: [{ required: true, message: '请选择单据日期', trigger: 'change' }]
-  }
+  }))
   const headerItems = computed<FormItem[]>(() => [
     ...(shouldExposeTenantField.value
       ? [
@@ -947,7 +2031,26 @@
         ]
       : []),
     { label: '单据', key: 'documentSection', type: 'divider', span: 24 },
-    { label: config.value.numberLabel, key: 'documentNo', type: 'input', props: { maxlength: 60 } },
+    {
+      label: config.value.numberLabel,
+      key: 'documentNo',
+      type: 'input',
+      props: {
+        maxlength: 60,
+        disabled:
+          kind.value === 'purchase_contract' ||
+          kind.value === 'purchase_request' ||
+          kind.value === 'purchase_order' ||
+          kind.value === 'receipt_notice',
+        placeholder:
+          kind.value === 'purchase_contract' ||
+          kind.value === 'purchase_request' ||
+          kind.value === 'purchase_order' ||
+          kind.value === 'receipt_notice'
+            ? '保存后按月度编号规则自动生成'
+            : undefined
+      }
+    },
     {
       label: '单据类型',
       key: 'documentTypeId',
@@ -967,7 +2070,7 @@
     {
       label: '项目名称',
       key: 'projectId',
-      type: 'select',
+      type: 'slot',
       props: {
         options: projects.value.map((item) => ({
           label: `${item.projectName}（${item.projectCode}）`,
@@ -983,7 +2086,7 @@
           {
             label: '供应商全称',
             key: 'supplierId',
-            type: 'select',
+            type: 'slot',
             props: {
               options: suppliers.value.map((item) => ({
                 label: `${item.supplierName}（${item.supplierCode}）`,
@@ -998,7 +2101,9 @@
           } as FormItem
         ]
       : []),
-    ...(config.value.sourceKind
+    ...(config.value.sourceKind &&
+    kind.value !== 'receipt_notice' &&
+    kind.value !== 'purchase_order'
       ? [
           {
             label: '来源单据',
@@ -1053,13 +2158,17 @@
     config.value.fields.map((field): FormItem => ({
       label: field.label,
       key: field.key,
-      type: field.type,
+      type: field.key === 'ownerId' ? 'slot' : field.type,
       span: field.span ?? 12,
       props:
         field.type === 'date'
           ? { type: 'date', valueFormat: 'YYYY-MM-DD', class: 'w-full!' }
           : field.type === 'select'
-            ? { options: userStore.getDictMap?.scmContractEffectiveness ?? [], clearable: true }
+            ? field.key === 'contractStatus'
+              ? { options: userStore.getDictMap?.scmPurchaseContractStatus ?? [], disabled: true }
+              : field.key === 'ownerType'
+                ? { options: userStore.getDictMap?.mdmBusinessOwnerType ?? [] }
+                : { options: userStore.getDictMap?.scmContractEffectiveness ?? [], disabled: true }
             : { maxlength: field.span === 24 ? 500 : 120 }
     }))
   )
@@ -1070,9 +2179,16 @@
     projects.value = []
     suppliers.value = []
     materials.value = []
+    materialCategories.value = []
+    warehouses.value = []
+    bins.value = []
+    customers.value = []
     documentTypes.value = []
     sourceDocuments.value = []
     quotations.value = []
+    salesContracts.value = []
+    salesOrders.value = []
+    purchaseContracts.value = []
     if (!tenantId) return
     loading.value = true
     try {
@@ -1083,27 +2199,116 @@
         typeResult,
         sourceResult,
         quoteResult,
-        menusResult
+        menusResult,
+        categoryResult,
+        contractResult,
+        purchaseContractResult,
+        warehouseResult,
+        binResult,
+        customerResult,
+        salesOrderResult
       ] = await Promise.all([
-        fetchScmProjectOptions(tenantId),
+        fetchScmPurchaseProjectOptions(tenantId),
         fetchScmSupplierOptions(tenantId),
         fetchScmMaterialOptions(tenantId),
         fetchScmDocumentTypeOptions(tenantId),
         config.value.sourceKind
           ? fetchScmPurchaseSourceOptions(config.value.sourceKind, tenantId)
           : Promise.resolve(null),
-        ['purchase_contract', 'purchase_request'].includes(kind.value)
+        ['purchase_contract', 'purchase_request', 'purchase_order'].includes(kind.value)
           ? fetchScmSourceOptions('sales_quotation', tenantId)
           : Promise.resolve(null),
-        fetchScmPurchaseMenuIds()
+        fetchScmPurchaseMenuIds(),
+        kind.value === 'purchase_contract' ||
+        kind.value === 'purchase_request' ||
+        kind.value === 'purchase_order' ||
+        kind.value === 'receipt_notice'
+          ? fetchScmPurchaseMaterialCategories(tenantId)
+          : Promise.resolve([]),
+        kind.value === 'purchase_request' || kind.value === 'purchase_order'
+          ? fetchScmSourceOptions('sales_contract', tenantId)
+          : Promise.resolve(null),
+        kind.value === 'purchase_request' || kind.value === 'purchase_order'
+          ? fetchScmPurchaseSourceOptions('purchase_contract', tenantId)
+          : Promise.resolve(null),
+        kind.value === 'receipt_notice' || kind.value === 'purchase_order'
+          ? fetchScmPurchaseWarehouseOptions(tenantId)
+          : Promise.resolve([]),
+        kind.value === 'receipt_notice' || kind.value === 'purchase_order'
+          ? fetchScmPurchaseBinOptions(tenantId)
+          : Promise.resolve([]),
+        kind.value === 'receipt_notice' || kind.value === 'purchase_order'
+          ? fetchScmPurchaseCustomerOptions(tenantId)
+          : Promise.resolve([]),
+        kind.value === 'purchase_order'
+          ? fetchScmSourceOptions('sales_order', tenantId)
+          : Promise.resolve(null)
       ])
       if (revision !== referenceRevision) return
-      projects.value = projectResult.data ?? []
+      projects.value = projectResult
       suppliers.value = supplierResult.data ?? []
       materials.value = materialResult.data ?? []
+      if (
+        kind.value === 'purchase_contract' ||
+        kind.value === 'purchase_request' ||
+        kind.value === 'purchase_order'
+      ) {
+        for (const line of lines.value) {
+          const material = materials.value.find((item) => item.id === line.materialId)
+          if (!material) continue
+          if (kind.value === 'purchase_order') {
+            if (line.unit !== material.purchaseUnit) {
+              const converted = toPurchaseUnit(
+                material,
+                line.quantity,
+                line.unitPrice,
+                line.unit || material.baseUnitName || material.unit || ''
+              )
+              if (converted) {
+                line.quantity = converted.quantity
+                line.unitPrice = converted.unitPrice
+                line.unit = material.purchaseUnit || material.baseUnitName || material.unit || ''
+              }
+            }
+            line.department ||= details.department
+            line.applicant ||= details.applicant
+            line.applicantName ||= details.applicantName
+            recalculateOrderUnits(line)
+            updateTaxInclusiveUnitPrice(line)
+            continue
+          }
+          if (!line.unit || line.unit === material.unit)
+            line.unit = material.baseUnitName || material.unit || ''
+          if (
+            kind.value === 'purchase_contract' &&
+            (!line.baseUnit || line.baseUnit === material.unit)
+          )
+            line.baseUnit = material.baseUnitName || material.unit || ''
+        }
+      }
+      if (kind.value === 'purchase_order') {
+        for (const plan of deliveryPlans.value) {
+          const line = lines.value.find((item) => item.lineId === plan.lineId) || lines.value[0]
+          if (!line) continue
+          if (!plan.lineId && plan.plannedBaseQuantity && line.baseQuantity)
+            plan.quantity =
+              Math.round((plan.plannedBaseQuantity / line.baseQuantity) * line.quantity * 1000) /
+              1000
+          plan.lineId = line.lineId
+          plan.unit = line.unit
+          updateDeliveryBaseQuantity(plan)
+        }
+      }
+      materialCategories.value = categoryResult
+      warehouses.value = warehouseResult
+      bins.value = binResult
+      customers.value = customerResult
       documentTypes.value = typeResult.data ?? []
       sourceDocuments.value = sourceResult?.data ?? []
       quotations.value = quoteResult?.data ?? []
+      salesContracts.value = contractResult?.data ?? []
+      salesOrders.value = salesOrderResult?.data ?? []
+      purchaseContracts.value = purchaseContractResult?.data ?? []
       menuIds.value = Object.fromEntries(
         (menusResult.data ?? []).map((item) => [
           Object.values(purchaseConfigs).find((config) => config.menuName === item.name)?.kind ??
@@ -1119,28 +2324,176 @@
     }
   }
 
-  function newLine(material?: ScmMaterialOption): ScmPurchaseLine {
+  function nextLineNo(): number {
+    return Math.max(0, ...lines.value.map((line) => Number(line.lineNo) || 0)) + 10
+  }
+  function conversionFactor(material: ScmMaterialOption, unitId?: string | null): number | null {
+    if (!unitId || unitId === material.baseUnitId) return 1
+    const conversion = material.unitConversions?.find((item) => item.sourceUnitId === unitId)
+    if (!conversion || conversion.sourceFactor <= 0 || conversion.baseFactor <= 0) return null
+    return conversion.baseFactor / conversion.sourceFactor
+  }
+  function sourceUnitFactor(material: ScmMaterialOption, unitName: string): number | null {
+    if (!unitName || unitName === material.baseUnitName || unitName === material.unit) return 1
+    const sourceUnitId = [
+      [material.purchaseUnit, material.purchaseUnitId],
+      [material.salesUnit, material.salesUnitId],
+      [material.stockUnit, material.inventoryUnitId],
+      [material.auxiliaryUnit, material.auxiliaryUnitId],
+      [material.auxiliaryUnit2, material.auxiliaryUnit2Id]
+    ].find(([name]) => name === unitName)?.[1]
+    if (!sourceUnitId) return null
+    return conversionFactor(material, sourceUnitId)
+  }
+  function toPurchaseUnit(
+    material: ScmMaterialOption,
+    quantity: number,
+    unitPrice: number,
+    sourceUnit: string
+  ): { quantity: number; unitPrice: number } | null {
+    const sourceFactor = sourceUnitFactor(material, sourceUnit)
+    const purchaseFactor = conversionFactor(material, material.purchaseUnitId)
+    if (!sourceFactor || !purchaseFactor) return null
+    const convertedQuantity = Math.round(((quantity * sourceFactor) / purchaseFactor) * 1000) / 1000
+    if (convertedQuantity <= 0) return null
     return {
+      quantity: convertedQuantity,
+      unitPrice: Math.round(((unitPrice * purchaseFactor) / sourceFactor) * 10000) / 10000
+    }
+  }
+  function recalculateReceiptUnits(line: ScmPurchaseLine): void {
+    if (kind.value !== 'receipt_notice') return
+    const material = materials.value.find((item) => item.id === line.materialId)
+    if (!material) return
+    const baseFactor = conversionFactor(material, material.purchaseUnitId)
+    const baseQuantity =
+      baseFactor === null ? 0 : Math.round(line.quantity * baseFactor * 1000) / 1000
+    line.baseUnit = material.unit || ''
+    line.stockUnit = material.stockUnit || material.unit || ''
+    line.baseQuantity = baseQuantity
+    const stockFactor = conversionFactor(material, material.inventoryUnitId)
+    line.stockQuantity =
+      stockFactor === null ? 0 : Math.round((baseQuantity / stockFactor) * 1000) / 1000
+    line.auxiliaryUnit = material.auxiliaryUnit || ''
+    line.auxiliaryUnit2 = material.auxiliaryUnit2 || ''
+    const firstFactor = conversionFactor(material, material.auxiliaryUnitId)
+    const secondFactor = conversionFactor(material, material.auxiliaryUnit2Id)
+    line.auxiliaryQuantity =
+      material.auxiliaryUnitId && firstFactor
+        ? Math.round((baseQuantity / firstFactor) * 1000) / 1000
+        : 0
+    line.auxiliaryQuantity2 =
+      material.auxiliaryUnit2Id && secondFactor
+        ? Math.round((baseQuantity / secondFactor) * 1000) / 1000
+        : 0
+  }
+  function recalculateOrderUnits(line: ScmPurchaseLine): void {
+    if (kind.value !== 'purchase_order') return
+    const material = materials.value.find((item) => item.id === line.materialId)
+    if (!material) return
+    const purchaseFactor = conversionFactor(material, material.purchaseUnitId)
+    const baseQuantity =
+      purchaseFactor === null ? 0 : Math.round(line.quantity * purchaseFactor * 1000) / 1000
+    line.baseUnit = material.baseUnitName || material.unit || ''
+    line.stockUnit = material.stockUnit || line.baseUnit
+    line.baseQuantity = baseQuantity
+    const stockFactor = conversionFactor(material, material.inventoryUnitId)
+    line.stockQuantity = stockFactor ? Math.round((baseQuantity / stockFactor) * 1000) / 1000 : 0
+    line.auxiliaryUnit = material.auxiliaryUnit || ''
+    line.auxiliaryUnit2 = material.auxiliaryUnit2 || ''
+    const firstFactor = conversionFactor(material, material.auxiliaryUnitId)
+    const secondFactor = conversionFactor(material, material.auxiliaryUnit2Id)
+    line.auxiliaryQuantity =
+      material.auxiliaryUnitId && firstFactor
+        ? Math.round((baseQuantity / firstFactor) * 1000) / 1000
+        : 0
+    line.auxiliaryQuantity2 =
+      material.auxiliaryUnit2Id && secondFactor
+        ? Math.round((baseQuantity / secondFactor) * 1000) / 1000
+        : 0
+  }
+  function applyOrderContractPrice(line: ScmPurchaseLine): void {
+    if (kind.value !== 'purchase_order' || !header.supplierId) return
+    const contract = purchaseContracts.value.find(
+      (item) =>
+        item.projectId === header.projectId &&
+        item.supplierId === header.supplierId &&
+        item.status === 'effective' &&
+        item.lines.some((candidate) => candidate.materialId === line.materialId)
+    )
+    const contractLine = contract?.lines.find(
+      (candidate) => candidate.materialId === line.materialId
+    )
+    if (!contract || !contractLine) return
+    const material = materials.value.find((item) => item.id === line.materialId)
+    if (!material) return
+    const converted = toPurchaseUnit(material, 1, Number(contractLine.unitPrice), contractLine.unit)
+    if (!converted) return
+    line.unitPrice = converted.unitPrice
+    line.taxRate = Number(contractLine.taxRate)
+    line.contractNo = contract.documentNo
+    updateTaxInclusiveUnitPrice(line)
+  }
+  function newLine(material?: ScmMaterialOption): ScmPurchaseLine {
+    const line: ScmPurchaseLine = {
       lineId: crypto.randomUUID(),
+      lineNo:
+        kind.value === 'purchase_contract' ||
+        kind.value === 'purchase_request' ||
+        kind.value === 'purchase_order' ||
+        kind.value === 'receipt_notice'
+          ? nextLineNo()
+          : undefined,
       materialId: material?.id ?? '',
       materialCode: material?.materialCode ?? '',
       materialDescription: material?.materialDescription ?? '',
       specification: material?.specification ?? '',
-      unit: material?.unit ?? '',
+      unit:
+        kind.value === 'receipt_notice'
+          ? material?.purchaseUnit || material?.baseUnitName || material?.unit || ''
+          : kind.value === 'purchase_order'
+            ? material?.purchaseUnit || material?.baseUnitName || material?.unit || ''
+            : kind.value === 'purchase_contract' || kind.value === 'purchase_request'
+              ? material?.baseUnitName || material?.unit || ''
+              : (material?.unit ?? ''),
+      baseUnit:
+        kind.value === 'purchase_contract' ||
+        kind.value === 'purchase_order' ||
+        kind.value === 'receipt_notice'
+          ? material?.baseUnitName || material?.unit || ''
+          : undefined,
       quantity: 1,
       unitPrice: 0,
       taxRate: 0,
       discountMode: 'none',
       discountRate: 0,
-      gift: false
+      gift: false,
+      ownerType: kind.value === 'receipt_notice' ? 'self' : undefined
     }
+    recalculateReceiptUnits(line)
+    recalculateOrderUnits(line)
+    if (material) applyOrderContractPrice(line)
+    if (kind.value === 'purchase_order') updateTaxInclusiveUnitPrice(line)
+    return line
   }
   function selectMaterial(line: ScmPurchaseLine, id: string) {
     const material = materials.value.find((item) => item.id === id)
     line.materialCode = material?.materialCode ?? ''
     line.materialDescription = material?.materialDescription ?? ''
     line.specification = material?.specification ?? ''
-    line.unit = material?.unit ?? ''
+    line.unit =
+      kind.value === 'receipt_notice'
+        ? material?.purchaseUnit || material?.baseUnitName || material?.unit || ''
+        : kind.value === 'purchase_order'
+          ? material?.purchaseUnit || material?.baseUnitName || material?.unit || ''
+          : kind.value === 'purchase_contract' || kind.value === 'purchase_request'
+            ? material?.baseUnitName || material?.unit || ''
+            : (material?.unit ?? '')
+    if (kind.value === 'purchase_contract' || kind.value === 'purchase_order')
+      line.baseUnit = material?.baseUnitName || material?.unit || ''
+    recalculateReceiptUnits(line)
+    recalculateOrderUnits(line)
+    applyOrderContractPrice(line)
   }
   function setEmployeeName(key: 'buyer' | 'applicant' | 'keeper', rows: EmployeeIntegrationItem[]) {
     details[`${key}Name`] = rows[0]?.employeeName ?? ''
@@ -1163,7 +2516,75 @@
       }
     })
   }
+  function addContractMaterials(
+    _value: string | string[] | undefined,
+    rows: MaterialSelectRecord[]
+  ) {
+    if (lines.value.length + rows.length > 200) {
+      ElMessage.warning('合同明细最多 200 行')
+      return
+    }
+    for (const row of rows) {
+      const material = row as ScmPurchaseMaterialCandidate
+      const option: ScmMaterialOption = {
+        id: material.id,
+        tenantId: material.tenantId,
+        materialCode: material.materialCode,
+        materialDescription: material.description || material.materialName,
+        specification: material.specificationModel,
+        unit: material.basicUnit,
+        baseUnitName: material.baseUnitRecord?.unitName,
+        materialSource: material.materialSource,
+        baseUnitId: material.baseUnitId,
+        purchaseUnitId: material.purchaseUnitId,
+        inventoryUnitId: material.inventoryUnitId,
+        stockUnit: material.inventoryUnit?.unitName,
+        purchaseUnit: material.purchaseUnit?.unitName,
+        auxiliaryUnitId: material.auxiliaryUnitId,
+        auxiliaryUnit2Id: material.auxiliaryUnit2Id,
+        auxiliaryUnit: material.auxiliaryUnit?.unitName,
+        auxiliaryUnit2: material.auxiliaryUnit2?.unitName,
+        unitConversions: material.unitConversions ?? [],
+        batchManagementEnabled: material.batchManagementEnabled,
+        batchRuleId: material.batchRuleId
+      }
+      if (!materials.value.some((item) => item.id === option.id)) materials.value.push(option)
+      lines.value.push(newLine(option))
+    }
+  }
   async function importSourceLines() {
+    if (kind.value === 'receipt_notice') {
+      if (!header.supplierId) {
+        ElMessage.warning('请先参选供应商')
+        return
+      }
+      const choices = await fetchScmReceiptOrderLineChoices(
+        header.tenantId,
+        header.supplierId,
+        header.projectId || undefined
+      )
+      const missingIds = uniq(choices.map((choice) => choice.materialId)).filter(
+        (id) => !materials.value.some((material) => material.id === id)
+      )
+      if (missingIds.length) {
+        const { data } = await fetchScmMaterialOptions(header.tenantId, missingIds)
+        materials.value.push(...(data ?? []))
+      }
+      availableSourceLines.value = choices.filter(
+        (choice) =>
+          (!receiptSourceOrderId.value ||
+            choice.sourcePurchaseDocumentId === receiptSourceOrderId.value) &&
+          !lines.value.some(
+            (line) =>
+              line.sourcePurchaseDocumentId === choice.sourcePurchaseDocumentId &&
+              line.sourceLineId === choice.sourceLineId
+          )
+      )
+      selectedSourceLineIds.value = []
+      await nextTick()
+      await receiptOrderSelectRef.value?.open()
+      return
+    }
     const source = sourceDocuments.value.find((item) => item.id === header.sourceId)
     if (!source) return
     const available = await fetchScmPurchaseRemainingLines(source)
@@ -1192,14 +2613,209 @@
         header.supplierId = source.supplierId ?? header.supplierId
         if (kind.value === 'receipt_notice' && !details.contractNo)
           details.contractNo = source.paymentPlans.find((plan) => plan.contractNo)?.contractNo ?? ''
-        lines.value.push(...selected)
+        let lineNo = nextLineNo()
+        if (
+          kind.value === 'purchase_order' &&
+          selected.some((choice) => {
+            const material = materials.value.find((item) => item.id === choice.materialId)
+            return (
+              !material || !toPurchaseUnit(material, choice.quantity, choice.unitPrice, choice.unit)
+            )
+          })
+        ) {
+          ElMessage.warning('来源物料缺少采购单位换算关系')
+          return false
+        }
+        for (const choice of selected) {
+          const material = materials.value.find((item) => item.id === choice.materialId)
+          const converted =
+            kind.value === 'purchase_order' && material
+              ? toPurchaseUnit(material, choice.quantity, choice.unitPrice, choice.unit)
+              : null
+          const line: ScmPurchaseLine = {
+            ...choice,
+            lineId: crypto.randomUUID(),
+            lineNo,
+            quantity: converted?.quantity ?? choice.quantity,
+            unitPrice: converted?.unitPrice ?? choice.unitPrice,
+            sourcePurchaseDocumentId:
+              kind.value === 'purchase_order' ? source.id : choice.sourcePurchaseDocumentId,
+            sourceLineNo: choice.lineNo || undefined,
+            sourceQuantity: kind.value === 'purchase_order' ? choice.quantity : undefined,
+            unit:
+              kind.value === 'purchase_order'
+                ? material?.purchaseUnit || material?.baseUnitName || choice.unit
+                : choice.unit,
+            baseUnit:
+              kind.value === 'purchase_order'
+                ? material?.baseUnitName || material?.unit || ''
+                : choice.baseUnit
+          }
+          lineNo += 10
+          if (kind.value === 'purchase_order') {
+            applyOrderContractPrice(line)
+            recalculateOrderUnits(line)
+            updateTaxInclusiveUnitPrice(line)
+          }
+          lines.value.push(line)
+        }
         return true
       }
     })
   }
+  function confirmReceiptOrderLines(
+    value: string | number | Array<string | number> | undefined
+  ): void {
+    const selectedIds = Array.isArray(value) ? value.map(String) : []
+    const selected = availableSourceLines.value.filter((line) =>
+      selectedIds.includes(line.choiceId || '')
+    ) as ScmReceiptOrderLineChoice[]
+    if (!selected.length) {
+      ElMessage.warning('请选择至少一行采购订单明细')
+      return
+    }
+    if (lines.value.length + selected.length > 200) {
+      ElMessage.warning('收料物料明细最多 200 行')
+      return
+    }
+    if (selected.some((line) => line.projectId !== selected[0].projectId)) {
+      ElMessage.warning('同一张收料通知单只能选择同一项目的采购订单')
+      return
+    }
+    header.projectId = selected[0].projectId
+    let lineNo = nextLineNo()
+    for (const choice of selected) {
+      const line: ScmPurchaseLine = {
+        ...omit(choice, ['choiceId', 'projectId', 'projectName', 'supplierId']),
+        lineId: crypto.randomUUID(),
+        lineNo,
+        ownerType: 'self'
+      }
+      lineNo += 10
+      recalculateReceiptUnits(line)
+      lines.value.push(line)
+    }
+  }
   async function importQuotationLines() {
-    if (!eligibleQuotations.value.length) {
-      ElMessage.warning('当前项目暂无已生效的销售报价单')
+    if (!filteredQuotationLines.value.length) {
+      ElMessage.warning('当前项目暂无可参选的采购申请、合同或报价明细')
+      return
+    }
+    if (kind.value !== 'receipt_notice') {
+      quotationKeyword.value = ''
+      selectedQuotationLines.value = []
+      await quotationDialogRef.value?.handleOpen(undefined, {
+        title: kind.value === 'purchase_contract' ? '参选报价明细' : '选单',
+        subtitle:
+          kind.value === 'purchase_contract'
+            ? '仅显示当前项目已生效报价中的采购件，可多选明细批量带入。'
+            : '从当前项目的采购申请、已生效采购合同、销售报价或销售订单中多选采购件明细。',
+        confirmText: '带入选中明细',
+        onConfirm: () => {
+          const selected = selectedQuotationLines.value.filter(
+            (choice) =>
+              !lines.value.some(
+                (line) =>
+                  line.sourceDocumentNo === choice.documentNo &&
+                  (line.quotationLineId === choice.lineId ||
+                    line.purchaseContractLineId === choice.lineId)
+              )
+          )
+          if (!selected.length) {
+            ElMessage.warning('请选择尚未带入的来源明细')
+            return false
+          }
+          if (lines.value.length + selected.length > 200) {
+            ElMessage.warning('物料明细最多 200 行')
+            return false
+          }
+          if (
+            kind.value === 'purchase_order' &&
+            selected.some((choice) => {
+              const material = materials.value.find((item) => item.id === choice.materialId)
+              return (
+                !material ||
+                !toPurchaseUnit(
+                  material,
+                  choice.quantity,
+                  choice.unitPrice,
+                  choice.salesUnit || material.baseUnitName || material.unit || ''
+                )
+              )
+            })
+          ) {
+            ElMessage.warning('选中明细的单位换算关系不完整，请先维护物料单位')
+            return false
+          }
+          for (const choice of selected) {
+            const material = materials.value.find((item) => item.id === choice.materialId)
+            const baseLine = newLine(material)
+            const converted =
+              kind.value === 'purchase_order' && material
+                ? toPurchaseUnit(
+                    material,
+                    choice.quantity,
+                    choice.unitPrice,
+                    choice.salesUnit || material.baseUnitName || material.unit || ''
+                  )
+                : null
+            const line: ScmPurchaseLine = {
+              ...baseLine,
+              lineNo:
+                choice.sourceSalesDocumentId &&
+                (kind.value === 'purchase_request' || kind.value === 'purchase_order') &&
+                Number.isInteger(choice.selectedLineNo) &&
+                choice.selectedLineNo > 0 &&
+                !lines.value.some((item) => item.lineNo === choice.selectedLineNo)
+                  ? choice.selectedLineNo
+                  : baseLine.lineNo,
+              materialId: choice.materialId,
+              materialCode: choice.materialCode,
+              materialDescription: choice.materialDescription,
+              specification: choice.specification ?? '',
+              unit:
+                kind.value === 'purchase_order'
+                  ? material?.purchaseUnit || material?.baseUnitName || material?.unit || ''
+                  : kind.value === 'purchase_request'
+                    ? material?.baseUnitName || material?.unit || ''
+                    : material?.baseUnitName || material?.unit || choice.salesUnit || '',
+              baseUnit:
+                kind.value === 'purchase_contract' || kind.value === 'purchase_order'
+                  ? material?.baseUnitName || material?.unit || ''
+                  : undefined,
+              quantity: converted?.quantity ?? choice.quantity,
+              unitPrice:
+                kind.value === 'purchase_order' &&
+                baseLine.contractNo &&
+                !choice.sourcePurchaseDocumentId
+                  ? baseLine.unitPrice
+                  : (converted?.unitPrice ?? choice.unitPrice),
+              taxRate:
+                kind.value === 'purchase_order' &&
+                baseLine.contractNo &&
+                !choice.sourcePurchaseDocumentId
+                  ? baseLine.taxRate
+                  : choice.taxRate,
+              sourceDocumentNo: choice.documentNo,
+              sourceSalesDocumentId: choice.sourceSalesDocumentId,
+              sourcePurchaseDocumentId:
+                choice.sourcePurchaseRequestId || choice.sourcePurchaseDocumentId,
+              sourceLineId: choice.sourcePurchaseRequestId ? choice.lineId : undefined,
+              sourceQuantity: choice.sourcePurchaseRequestId ? choice.quantity : undefined,
+              quotationLineId: choice.sourceSalesDocumentId ? choice.lineId : undefined,
+              purchaseContractLineId: choice.sourcePurchaseDocumentId ? choice.lineId : undefined,
+              sourceLineNo: choice.selectedLineNo,
+              contractNo: choice.sourcePurchaseDocumentId ? choice.documentNo : baseLine.contractNo
+            }
+            if (kind.value === 'purchase_order') {
+              recalculateOrderUnits(line)
+              updateTaxInclusiveUnitPrice(line)
+            }
+            lines.value.push(line)
+          }
+          return true
+        }
+      })
       return
     }
     selectedQuotationId.value = ''
@@ -1222,20 +2838,24 @@
           ElMessage.warning('此报价单暂无标记为采购件的物料')
           return false
         }
-        lines.value.push(
-          ...purchaseLines.map((line) => ({
-            ...newLine(),
+        for (const line of purchaseLines) {
+          const material = materials.value.find((item) => item.id === line.materialId)
+          lines.value.push({
+            ...newLine(material),
             materialId: line.materialId,
             materialCode: line.materialCode,
             materialDescription: line.materialDescription,
             specification: line.specification ?? '',
-            unit: line.salesUnit ?? '',
+            unit: material?.baseUnitName || material?.unit || line.salesUnit || '',
+            baseUnit: material?.baseUnitName || material?.unit || '',
             quantity: line.quantity,
             unitPrice: line.unitPrice,
             taxRate: line.taxRate,
-            sourceDocumentNo: quote.documentNo
-          }))
-        )
+            sourceDocumentNo: quote.documentNo,
+            sourceSalesDocumentId: quote.id,
+            quotationLineId: line.lineId
+          })
+        }
         return true
       }
     })
@@ -1264,16 +2884,31 @@
     })
   }
   function addDelivery() {
+    const line = kind.value === 'purchase_order' ? lines.value[0] : undefined
     deliveryPlans.value.push({
       id: crypto.randomUUID(),
-      plannedDate: '',
-      quantity: 1,
-      plannedBaseQuantity: 1,
+      lineId: line?.lineId,
+      unit: line?.unit,
+      plannedDate: kind.value === 'purchase_order' ? dayjs().format('YYYY-MM-DD') : '',
+      quantity: line?.quantity ?? 1,
+      plannedBaseQuantity: line?.baseQuantity ?? 1,
       deliveredQuantity: 0,
       location: '',
       address: '',
       remark: ''
     })
+  }
+  function fillDeliveryFromLine(plan: ScmPurchaseDeliveryPlan): void {
+    const line = lines.value.find((item) => item.lineId === plan.lineId)
+    plan.unit = line?.unit || ''
+    plan.quantity = line?.quantity || 0
+    plan.plannedBaseQuantity = line?.baseQuantity || 0
+  }
+  function updateDeliveryBaseQuantity(plan: ScmPurchaseDeliveryPlan): void {
+    const line = lines.value.find((item) => item.lineId === plan.lineId)
+    if (line?.quantity && line.baseQuantity)
+      plan.plannedBaseQuantity =
+        Math.round(((plan.quantity * line.baseQuantity) / line.quantity) * 1000) / 1000
   }
   function copyDelivery(plan: ScmPurchaseDeliveryPlan) {
     deliveryPlans.value.push({ ...plan, id: crypto.randomUUID(), deliveredQuantity: 0 })
@@ -1281,8 +2916,17 @@
   function addClause() {
     clauses.value.push({ id: crypto.randomUUID(), title: '', content: '' })
   }
-  function generateBatch(line: ScmPurchaseLine) {
-    line.batchNo = `LOT-${dayjs().format('YYYYMMDD')}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
+  async function generateBatch(line: ScmPurchaseLine): Promise<void> {
+    const material = materials.value.find((item) => item.id === line.materialId)
+    if (!material?.batchManagementEnabled || !material.batchRuleId) {
+      ElMessage.warning('此物料未启用批号管理或未配置批号规则')
+      return
+    }
+    try {
+      line.batchNo = await generateScmReceiptBatchNo(line.materialId)
+    } catch {
+      // API 层已提示错误。
+    }
   }
   function generateSerial(line: ScmPurchaseLine) {
     if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 200) {
@@ -1299,6 +2943,18 @@
   function validateBusiness() {
     if (kind.value !== 'purchase_request' && !header.supplierId) {
       ElMessage.warning('请选择供应商')
+      return false
+    }
+    if (kind.value === 'purchase_order' && !details.buyer) {
+      ElMessage.warning('请选择采购员')
+      return false
+    }
+    if (
+      kind.value === 'purchase_order' &&
+      (details.ownerType === 'supplier' || details.ownerType === 'customer') &&
+      !details.ownerId
+    ) {
+      ElMessage.warning('请选择货主')
       return false
     }
     if (!lines.value.length) {
@@ -1322,6 +2978,65 @@
     ) {
       activeTab.value = 'lines'
       ElMessage.warning('请核对物料、正数数量、单价、税率和折扣率')
+      return false
+    }
+    if (
+      (kind.value === 'purchase_contract' ||
+        kind.value === 'purchase_request' ||
+        kind.value === 'purchase_order' ||
+        kind.value === 'receipt_notice') &&
+      (lines.value.some(
+        (line) =>
+          !Number.isInteger(line.lineNo) ||
+          Number(line.lineNo) < 1 ||
+          (kind.value === 'purchase_contract' && !line.baseUnit?.trim())
+      ) ||
+        new Set(lines.value.map((line) => line.lineNo)).size !== lines.value.length)
+    ) {
+      activeTab.value = 'lines'
+      ElMessage.warning('请填写不重复的正整数行号，并核对基本单位')
+      return false
+    }
+    if (
+      kind.value === 'purchase_order' &&
+      lines.value.some((line) => {
+        recalculateOrderUnits(line)
+        const material = materials.value.find((item) => item.id === line.materialId)
+        return (
+          !material ||
+          !line.baseUnit ||
+          !line.baseQuantity ||
+          !Number.isFinite(Number(line.taxInclusiveUnitPrice)) ||
+          lineSubtotal(line) < 0 ||
+          (line.binId &&
+            !bins.value.some(
+              (bin) => bin.id === line.binId && bin.warehouseId === line.warehouseId
+            ))
+        )
+      })
+    ) {
+      activeTab.value = 'lines'
+      ElMessage.warning('请核对订单单位换算、含税单价、折扣与仓位')
+      return false
+    }
+    if (
+      kind.value === 'receipt_notice' &&
+      lines.value.some((line) => {
+        recalculateReceiptUnits(line)
+        return (
+          !line.baseUnit?.trim() ||
+          !line.baseQuantity ||
+          !line.stockQuantity ||
+          (line.binId &&
+            !bins.value.some(
+              (bin) => bin.id === line.binId && bin.warehouseId === line.warehouseId
+            )) ||
+          ((line.ownerType === 'supplier' || line.ownerType === 'customer') && !line.ownerId)
+        )
+      })
+    ) {
+      activeTab.value = 'lines'
+      ElMessage.warning('请核对基本单位换算、仓位和货主')
       return false
     }
     if (paymentPlans.value.some((plan) => !plan.dueDate || plan.ratio < 0 || plan.amount < 0)) {
@@ -1362,7 +3077,17 @@
         documentDate: header.documentDate,
         deliveryDate: header.deliveryDate || null,
         details: { ...details },
-        lines: lines.value,
+        lines: lines.value.map((line) => {
+          if (kind.value !== 'receipt_notice' && kind.value !== 'purchase_order') return line
+          if (kind.value === 'receipt_notice') recalculateReceiptUnits(line)
+          else recalculateOrderUnits(line)
+          return {
+            ...line,
+            warehouse:
+              warehouses.value.find((item) => item.id === line.warehouseId)?.warehouseName || '',
+            location: bins.value.find((item) => item.id === line.binId)?.binName || ''
+          }
+        }),
         paymentPlans: paymentPlans.value,
         deliveryPlans: deliveryPlans.value,
         clauses: clauses.value,
@@ -1379,9 +3104,15 @@
   async function handleOpen(options: OpenOptions) {
     try {
       await Promise.all(
-        ['scmContractClause', 'scmContractEffectiveness', 'scmDiscountMode'].map((code) =>
-          userStore.ensureDictLoaded(code)
-        )
+        [
+          'scmContractClause',
+          'scmContractEffectiveness',
+          'scmPurchaseContractStatus',
+          'scmDiscountMode',
+          'scmTaxRate',
+          'mdmBusinessOwnerType',
+          'mdmProjectStatus'
+        ].map((code) => userStore.ensureDictLoaded(code))
       )
     } catch {
       ElMessage.warning('采购字典加载失败，请刷新页面重试')
@@ -1389,6 +3120,10 @@
     }
     preparing = true
     kind.value = options.kind
+    receiptSourceOrderId.value = ''
+    selectAfterSupplier.value = Boolean(
+      options.openLineSelector && options.kind === 'receipt_notice'
+    )
     recordId.value = options.copy ? undefined : options.record?.id
     tenantOptions.value = options.tenantOptions
     Object.assign(header, emptyHeader(), options.record ?? {}, {
@@ -1403,7 +3138,42 @@
     })
     for (const key of Object.keys(details)) delete details[key as keyof ScmPurchaseDetails]
     Object.assign(details, options.record?.details ?? {}, {
-      paymentMode: options.record?.details.paymentMode ?? 'amount'
+      paymentMode: options.record?.details.paymentMode ?? 'amount',
+      ...(kind.value === 'purchase_order' && !options.record
+        ? {
+            ownerType: 'self' as const,
+            buyer:
+              (userStore.getUserInfo.hrEmployee?.tenantId || userStore.getUserInfo.tenantId) ===
+              header.tenantId
+                ? userStore.getUserInfo.hrEmployeeId || undefined
+                : undefined,
+            buyerName:
+              (userStore.getUserInfo.hrEmployee?.tenantId || userStore.getUserInfo.tenantId) ===
+              header.tenantId
+                ? userStore.getUserInfo.hrEmployee?.employeeName
+                : undefined
+          }
+        : {}),
+      ...(kind.value === 'purchase_contract'
+        ? {
+            contractStatus:
+              options.record?.details.contractStatus ??
+              (options.record?.status === 'submitted'
+                ? 'SUBM'
+                : options.record?.status === 'effective' || options.record?.status === 'approved'
+                  ? 'APRV'
+                  : options.record?.status === 'expired'
+                    ? 'CNCL'
+                    : 'DRFT')
+          }
+        : {}),
+      ...(kind.value === 'purchase_contract' && !options.record
+        ? {
+            signedDate: dayjs().format('YYYY-MM-DD'),
+            startDate: dayjs().format('YYYY-MM-DD'),
+            effectiveness: 'inactive'
+          }
+        : {})
     })
     for (const key of ['buyer', 'applicant', 'keeper'] as const) {
       selectedEmployees[key] =
@@ -1420,10 +3190,24 @@
           : []
     }
     lines.value =
-      options.record?.lines.map((line) => ({
+      options.record?.lines.map((line, index) => ({
         ...line,
+        lineNo:
+          kind.value === 'purchase_contract' ||
+          kind.value === 'purchase_request' ||
+          kind.value === 'purchase_order' ||
+          kind.value === 'receipt_notice'
+            ? (line.lineNo ?? (index + 1) * 10)
+            : line.lineNo,
+        baseUnit: kind.value === 'purchase_contract' ? line.baseUnit || line.unit : line.baseUnit,
         lineId: options.copy ? crypto.randomUUID() : line.lineId,
         sourceLineId: options.copy ? undefined : line.sourceLineId,
+        sourceQuantity: options.copy ? undefined : line.sourceQuantity,
+        sourcePurchaseDocumentId: options.copy ? undefined : line.sourcePurchaseDocumentId,
+        sourceSalesDocumentId: options.copy ? undefined : line.sourceSalesDocumentId,
+        quotationLineId: options.copy ? undefined : line.quotationLineId,
+        purchaseContractLineId: options.copy ? undefined : line.purchaseContractLineId,
+        sourceLineNo: options.copy ? undefined : line.sourceLineNo,
         sourceDocumentNo:
           options.copy && (kind.value === 'purchase_order' || kind.value === 'receipt_notice')
             ? undefined
@@ -1431,12 +3215,6 @@
         batchNo: options.copy ? undefined : line.batchNo,
         serialNumbers: options.copy ? undefined : line.serialNumbers
       })) ?? []
-    if (options.generate) {
-      for (const line of lines.value) {
-        if (options.generate === 'batch') generateBatch(line)
-        else generateSerial(line)
-      }
-    }
     paymentPlans.value =
       options.record?.paymentPlans.map((item) => ({
         ...item,
@@ -1455,7 +3233,28 @@
     activeTab.value = 'lines'
     await nextTick()
     preparing = false
-    void loadReferences(header.tenantId)
+    await loadReferences(header.tenantId)
+    if (options.generate) {
+      for (const line of lines.value) {
+        if (options.generate === 'batch') {
+          if (
+            materials.value.find((material) => material.id === line.materialId)
+              ?.batchManagementEnabled
+          )
+            await generateBatch(line)
+        } else generateSerial(line)
+      }
+    }
+    if (options.initialSource && options.kind === 'purchase_order') {
+      header.sourceId = options.initialSource.id
+      header.projectId = options.initialSource.projectId ?? ''
+    }
+    if (options.initialSource && options.kind === 'receipt_notice') {
+      selectAfterSupplier.value = false
+      receiptSourceOrderId.value = options.initialSource.id
+      header.projectId = options.initialSource.projectId ?? ''
+      header.supplierId = options.initialSource.supplierId ?? ''
+    }
     await dialogRef.value?.handleOpen(options, {
       title: options.copy
         ? `复制${config.value.title} · ${options.record?.documentNo}`
@@ -1467,6 +3266,14 @@
       onOpen: () => headerFormRef.value?.clearValidate(),
       dialogProps: { closeOnClickModal: false }
     })
+    if (options.openLineSelector) {
+      if (options.kind === 'purchase_order' && header.sourceId) void importSourceLines()
+      else if (options.kind === 'purchase_request') void importQuotationLines()
+      else if (options.kind === 'receipt_notice' && header.supplierId) {
+        selectAfterSupplier.value = false
+        void importSourceLines()
+      }
+    }
   }
   watch(
     () => header.tenantId,
@@ -1484,7 +3291,24 @@
     (sourceId, previous) => {
       if (!preparing && sourceId !== previous)
         lines.value = lines.value.filter((line) => !line.sourceLineId)
-      if (!preparing && sourceId) void importSourceLines()
+      if (!preparing && sourceId && kind.value !== 'purchase_order') void importSourceLines()
+    }
+  )
+  watch(
+    () => header.supplierId,
+    (supplierId, previous) => {
+      if (preparing || kind.value !== 'receipt_notice' || supplierId === previous) return
+      lines.value = lines.value.filter((line) => !line.sourcePurchaseDocumentId)
+      if (supplierId && selectAfterSupplier.value) {
+        selectAfterSupplier.value = false
+        void importSourceLines()
+      }
+    }
+  )
+  watch(
+    () => details.ownerType,
+    (ownerType, previous) => {
+      if (!preparing && ownerType !== previous) details.ownerId = undefined
     }
   )
   watch(

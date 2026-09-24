@@ -112,6 +112,7 @@
             <QuotationLineTable
               ref="quotationLineTableRef"
               v-model:lines="lines"
+              quotation
               :materials="materialOptions"
               :disabled="!header.tenantId"
               :source-options="materialSourceOptions"
@@ -174,6 +175,7 @@
             <QuotationLineTable
               ref="quotationLineTableRef"
               v-model:lines="lines"
+              :quotation="kind === 'sales_quotation'"
               :engineering="kind === 'sales_quotation' && details.quotationScene === 'project'"
               :operational="kind === 'shipping_notice' || kind === 'loading'"
               :shipping="kind === 'shipping_notice'"
@@ -1834,6 +1836,7 @@
     lines.value =
       options.record?.lines.map((line, index) => ({
         ...line,
+        lineNo: kind.value === 'sales_quotation' ? (line.lineNo ?? (index + 1) * 10) : line.lineNo,
         lineId: options.copy ? crypto.randomUUID() : line.lineId,
         ...(options.copy && kind.value === 'sales_order'
           ? {

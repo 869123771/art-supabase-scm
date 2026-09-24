@@ -33,7 +33,7 @@
               <div class="flex min-w-0 flex-1 items-start gap-3">
                 <span
                   class="flex size-7 shrink-0 items-center justify-center rounded-md bg-[var(--el-color-primary-light-9)] text-xs font-semibold text-[var(--el-color-primary)]"
-                  >{{ index + 1 }}</span
+                  >{{ line.lineNo ?? index + 1 }}</span
                 >
                 <div class="min-w-0">
                   <div class="break-words text-sm font-semibold text-[var(--art-gray-900)]">{{
@@ -47,6 +47,33 @@
                     v-if="line.sourceDocumentNo"
                     class="mt-1 break-words text-xs text-[var(--art-gray-600)]"
                     >来源 {{ line.sourceDocumentNo }}</div
+                  >
+                  <div v-if="line.sourceLineNo" class="mt-1 text-xs text-[var(--art-gray-600)]">
+                    源单据行号 {{ line.sourceLineNo }}
+                  </div>
+                  <div
+                    v-if="record.kind === 'purchase_contract' && line.baseUnit"
+                    class="mt-1 text-xs text-[var(--art-gray-600)]"
+                  >
+                    基本单位 {{ line.baseUnit }}
+                  </div>
+                  <div
+                    v-if="
+                      record.kind === 'purchase_request' &&
+                      (line.reason || line.suggestedSupplierId)
+                    "
+                    class="mt-1 text-xs text-[var(--art-gray-600)]"
+                  >
+                    <span v-if="line.reason">需求原因 {{ line.reason }}</span>
+                    <span v-if="line.suggestedSupplierId">
+                      · 建议供应商
+                      {{
+                        suggestedSuppliers.get(line.suggestedSupplierId) || line.suggestedSupplierId
+                      }}</span
+                    >
+                  </div>
+                  <div v-if="line.gift" class="mt-1 text-xs text-[var(--el-color-success)]"
+                    >赠品 · 金额为 0</div
                   >
                   <div
                     v-if="record.kind === 'purchase_request'"
@@ -92,10 +119,12 @@
                   ><div class="text-xs text-[var(--art-gray-600)]">价税合计</div
                   ><div class="mt-1 font-semibold tabular-nums text-[var(--art-gray-900)]">{{
                     formatCurrencyValue(
-                      line.quantity *
-                        line.unitPrice *
-                        (1 - line.discountRate / 100) *
-                        (1 + line.taxRate / 100)
+                      line.gift
+                        ? 0
+                        : line.quantity *
+                            line.unitPrice *
+                            (1 - line.discountRate / 100) *
+                            (1 + line.taxRate / 100)
                     )
                   }}</div></div
                 >
@@ -175,7 +204,12 @@
   import { formatCurrencyValue } from '@/utils/ui/format'
   import { useUserStore } from '@/store/modules/user'
   import { storeToRefs } from 'pinia'
-  import { fetchScmPurchaseDocument, type ScmPurchaseDocument } from '@scm/api'
+  import {
+    fetchScmMaterialOptions,
+    fetchScmPurchaseDocument,
+    fetchScmSupplierOptions,
+    type ScmPurchaseDocument
+  } from '@scm/api'
   import { purchaseConfigs } from '../purchase-config'
 
   defineOptions({ name: 'ScmPurchaseDetailDrawer' })
@@ -205,6 +239,7 @@
     updatedAt: ''
   })
   const config = computed(() => purchaseConfigs[record.value.kind])
+  const suggestedSuppliers = ref(new Map<string, string>())
   const { getDictMap } = storeToRefs(useUserStore())
   const headerItems: ArtDescriptionItem<ScmPurchaseDocument>[] = [
     { key: 'documentNo', label: '单据编号', field: 'documentNo' },
@@ -252,12 +287,20 @@
     config.value.fields.map((field) => ({
       key: field.key,
       label: field.label,
-      value: (row: ScmPurchaseDocument) =>
-        String(
-          row.details[`${field.key}Name` as keyof typeof row.details] ??
-            row.details[field.key] ??
-            '--'
-        ),
+      value: (row: ScmPurchaseDocument) => {
+        const value = row.details[field.key]
+        if (field.key === 'contractStatus')
+          return (
+            getDictMap.value?.scmPurchaseContractStatus?.find((item) => item.value === value)
+              ?.label || String(value || '--')
+          )
+        if (field.key === 'effectiveness')
+          return (
+            getDictMap.value?.scmContractEffectiveness?.find((item) => item.value === value)
+              ?.label || String(value || '--')
+          )
+        return String(row.details[`${field.key}Name` as keyof typeof row.details] ?? value ?? '--')
+      },
       span: field.span === 24 ? 2 : 1
     }))
   )
@@ -271,8 +314,40 @@
       scrollbarAlways: true,
       showFooter: false
     })
-    const { data } = await fetchScmPurchaseDocument(value.id)
-    if (data) record.value = data
+    const [documentResult, materialResult, supplierResult] = await Promise.all([
+      fetchScmPurchaseDocument(value.id),
+      fetchScmMaterialOptions(
+        value.tenantId,
+        value.lines.map((line) => line.materialId)
+      ),
+      fetchScmSupplierOptions(value.tenantId)
+    ])
+    suggestedSuppliers.value = new Map(
+      (supplierResult.data ?? []).map((supplier) => [supplier.id, supplier.supplierName])
+    )
+    const data = documentResult.data
+    if (data) {
+      const materials = new Map(
+        (materialResult.data ?? []).map((material) => [material.id, material])
+      )
+      record.value = {
+        ...data,
+        lines: data.lines.map((line) => {
+          const material = materials.get(line.materialId)
+          if (!material || (data.kind !== 'purchase_request' && data.kind !== 'purchase_contract'))
+            return line
+          return {
+            ...line,
+            unit: line.unit === material.unit ? material.baseUnitName || line.unit : line.unit,
+            baseUnit:
+              data.kind === 'purchase_contract' &&
+              (!line.baseUnit || line.baseUnit === material.unit)
+                ? material.baseUnitName || line.baseUnit
+                : line.baseUnit
+          }
+        })
+      }
+    }
   }
   defineExpose({ handleOpen })
 </script>

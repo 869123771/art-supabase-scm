@@ -112,6 +112,7 @@ export interface ScmQuotationConversionResult {
 
 export interface ScmDocumentLine {
   lineId: string
+  lineNo?: number
   materialId: string
   materialCode: string
   materialDescription: string
@@ -264,6 +265,16 @@ export interface ScmMaterialOption {
   materialDescription: string
   specification?: string | null
   unit?: string | null
+  baseUnitName?: string | null
+  baseUnitId?: string | null
+  purchaseUnitId?: string | null
+  salesUnitId?: string | null
+  salesUnit?: string | null
+  inventoryUnitId?: string | null
+  stockUnit?: string | null
+  purchaseUnit?: string | null
+  batchManagementEnabled?: boolean
+  batchRuleId?: string | null
   materialSource?: string | null
   auxiliaryUnit?: string | null
   auxiliaryUnit2?: string | null

@@ -2,9 +2,11 @@ import { useSupabase } from '@/hooks'
 import { omit } from 'lodash-es'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
 import { fetchAllRangePages } from '@/utils/supabase'
+import { buildOrIlikeFilter } from '@/utils/supabase/search'
 import type {
   ScmPurchaseDocument,
   ScmPurchaseKind,
+  ScmPurchaseLine,
   ScmPurchaseQuery,
   ScmPurchaseStatus,
   ScmPurchaseWrite,
@@ -13,9 +15,252 @@ import type {
 
 export * from './purchase-document.types'
 
+export interface ScmPurchaseMaterialCategory {
+  id: string
+  tenantId: string
+  parentId: string | null
+  categoryCode: string
+  categoryName: string
+}
+
+export interface ScmPurchaseProjectOption {
+  id: string
+  tenantId: string
+  projectCode: string
+  projectName: string
+  customerId: string | null
+  projectStatus: string | null
+  customer: { customerName: string } | null
+  salesperson: { employeeName: string } | null
+  owner: { employeeName: string } | null
+}
+
+export interface ScmPurchaseMaterialCandidate {
+  id: string
+  tenantId: string
+  categoryId: string | null
+  materialCode: string
+  materialName: string
+  description: string | null
+  specificationModel: string | null
+  drawingNo: string | null
+  basicUnit: string | null
+  baseUnitRecord: { unitName: string } | null
+  materialSource: string | null
+  brand: string | null
+  baseUnitId: string | null
+  purchaseUnitId: string | null
+  inventoryUnitId: string | null
+  auxiliaryUnitId: string | null
+  auxiliaryUnit2Id: string | null
+  unitConversions: Array<{ sourceUnitId: string; baseFactor: number; sourceFactor: number }> | null
+  inventoryUnit: { unitName: string } | null
+  purchaseUnit: { unitName: string } | null
+  auxiliaryUnit: { unitName: string } | null
+  auxiliaryUnit2: { unitName: string } | null
+  batchManagementEnabled: boolean
+  batchRuleId: string | null
+}
+
+export interface ScmPurchaseWarehouseOption {
+  id: string
+  warehouseCode: string
+  warehouseName: string
+}
+
+export interface ScmPurchaseBinOption {
+  id: string
+  warehouseId: string
+  binCode: string
+  binName: string
+}
+
+export interface ScmPurchaseCustomerOption {
+  id: string
+  customerCode: string
+  customerName: string
+}
+
+export interface ScmReceiptBatchOption {
+  batchNo: string
+  materialId: string
+  quantity: number
+  warehouseId: string
+  receivedAt: string
+}
+
+export async function fetchScmReceiptBatchOptions(
+  tenantId: string,
+  materialId: string,
+  query: {
+    keyword?: string
+    warehouseId?: string
+    ownerType?: 'self' | 'supplier' | 'customer'
+    ownerId?: string
+  }
+) {
+  const result = await fetchAllRangePages<ScmReceiptBatchOption>(({ from, to }) => {
+    let request = supabase
+      .from('wms_inventory_batch')
+      .select('batch_no,material_id,quantity,warehouse_id,received_at')
+      .eq('tenant_id', tenantId)
+      .eq('material_id', materialId)
+      .eq('owner_type', query.ownerType || 'self')
+      .order('received_at', { ascending: false })
+      .range(from, to)
+    if (query.warehouseId) request = request.eq('warehouse_id', query.warehouseId)
+    if (query.ownerId) request = request.eq('owner_id', query.ownerId)
+    else request = request.is('owner_id', null)
+    if (query.keyword?.trim()) request = request.ilike('batch_no', `%${query.keyword.trim()}%`)
+    return responseHandle<ScmReceiptBatchOption[]>(() => request, {
+      breakReturn: true,
+      showErrorMessage: true,
+      errorMessage: '批号参选数据加载失败，请稍后重试'
+    })
+  })
+  if (result.error) throw result.error
+  const batches = new Map<string, ScmReceiptBatchOption>()
+  for (const batch of result.data ?? []) {
+    const existing = batches.get(batch.batchNo)
+    if (existing) existing.quantity += Number(batch.quantity)
+    else batches.set(batch.batchNo, { ...batch, quantity: Number(batch.quantity) })
+  }
+  return { data: [...batches.values()], total: batches.size }
+}
+
+export interface ScmReceiptOrderLineChoice extends ScmPurchaseLine {
+  choiceId: string
+  sourcePurchaseDocumentId: string
+  sourceDocumentNo: string
+  sourceLineId: string
+  sourceLineNo: number
+  projectId: string
+  projectName: string
+  supplierId: string
+}
+
 const { supabase, responseHandle, keysToSnakeDeep } = useSupabase()
 const documentSelect =
   '*,project:mdm_project!scm_purchase_document_project_id_fkey(project_code,project_name),document_type:mdm_document_type!scm_purchase_document_document_type_id_fkey(document_type_name)'
+
+export async function fetchScmPurchaseProjectOptions(tenantId: string) {
+  const { data } = await responseHandle<ScmPurchaseProjectOption[]>(
+    () =>
+      supabase
+        .from('mdm_project')
+        .select(
+          'id,tenant_id,project_code,project_name,customer_id,project_status,customer:mdm_customer!mdm_project_customer_tenant_fk(customer_name),salesperson:mdm_employee!mdm_project_sales_tenant_fk(employee_name),owner:mdm_employee!mdm_project_owner_tenant_fk(employee_name)'
+        )
+        .eq('tenant_id', tenantId)
+        .eq('enabled', true)
+        .order('project_name')
+        .range(0, 999),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '项目参选数据加载失败，请稍后重试' }
+  )
+  return data ?? []
+}
+
+export async function fetchScmPurchaseMaterialCategories(tenantId: string) {
+  const { data } = await responseHandle<ScmPurchaseMaterialCategory[]>(
+    () =>
+      supabase
+        .from('mdm_material_category')
+        .select('id,tenant_id,parent_id,category_code,category_name')
+        .eq('tenant_id', tenantId)
+        .order('sort')
+        .order('category_code')
+        .range(0, 999),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '物料分类加载失败，请稍后重试' }
+  )
+  return data ?? []
+}
+
+export async function fetchScmPurchaseMaterialCandidates(
+  tenantId: string,
+  query: { keyword?: string; categoryIds?: string[]; from: number; to: number }
+) {
+  let request = supabase
+    .from('mdm_material')
+    .select(
+      'id,tenant_id,category_id,material_code,material_name,description,specification_model,drawing_no,basic_unit,material_source,brand,base_unit_id,purchase_unit_id,inventory_unit_id,auxiliary_unit_id,auxiliary_unit_2_id,unit_conversions,batch_management_enabled,batch_rule_id,baseUnitRecord:mdm_unit_of_measure!mdm_material_base_unit_fkey(unit_name),purchaseUnit:mdm_unit_of_measure!mdm_material_purchase_unit_id_fkey(unit_name),inventoryUnit:mdm_unit_of_measure!mdm_material_inventory_unit_id_fkey(unit_name),auxiliaryUnit:mdm_unit_of_measure!mdm_material_aux_unit_fkey(unit_name),auxiliaryUnit2:mdm_unit_of_measure!mdm_material_aux_unit_2_fkey(unit_name)',
+      { count: 'exact' }
+    )
+    .eq('tenant_id', tenantId)
+    .order('material_code')
+    .range(query.from, query.to)
+  if (query.categoryIds?.length) request = request.in('category_id', query.categoryIds)
+  if (query.keyword?.trim())
+    request = request.or(
+      buildOrIlikeFilter(
+        ['material_code', 'material_name', 'description', 'specification_model', 'drawing_no'],
+        query.keyword.trim()
+      )
+    )
+  const { data, total } = await responseHandle<ScmPurchaseMaterialCandidate[]>(() => request, {
+    breakReturn: true,
+    showErrorMessage: true,
+    errorMessage: '物料参选数据加载失败，请稍后重试'
+  })
+  return { data: data ?? [], total: total ?? 0 }
+}
+
+export async function fetchScmPurchaseWarehouseOptions(tenantId: string) {
+  const { data } = await responseHandle<ScmPurchaseWarehouseOption[]>(
+    () =>
+      supabase
+        .from('mdm_warehouse')
+        .select('id,warehouse_code,warehouse_name')
+        .eq('tenant_id', tenantId)
+        .eq('status', 'enabled')
+        .order('warehouse_code')
+        .range(0, 999),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '仓库加载失败，请稍后重试' }
+  )
+  return data ?? []
+}
+
+export async function fetchScmPurchaseBinOptions(tenantId: string) {
+  const { data } = await responseHandle<ScmPurchaseBinOption[]>(
+    () =>
+      supabase
+        .from('mdm_warehouse_bin')
+        .select('id,warehouse_id,bin_code,bin_name')
+        .eq('tenant_id', tenantId)
+        .eq('status', 'enabled')
+        .order('bin_code')
+        .range(0, 999),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '仓位加载失败，请稍后重试' }
+  )
+  return data ?? []
+}
+
+export async function fetchScmPurchaseCustomerOptions(tenantId: string) {
+  const { data } = await responseHandle<ScmPurchaseCustomerOption[]>(
+    () =>
+      supabase
+        .from('mdm_customer')
+        .select('id,customer_code,customer_name')
+        .eq('tenant_id', tenantId)
+        .eq('enabled', true)
+        .order('customer_code')
+        .range(0, 999),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '客户加载失败，请稍后重试' }
+  )
+  return data ?? []
+}
+
+export async function generateScmReceiptBatchNo(materialId: string): Promise<string> {
+  const { data } = await responseHandle<string>(
+    () => supabase.rpc('scm_generate_receipt_batch_no_secure', { p_material_id: materialId }),
+    {
+      breakReturn: true,
+      showErrorMessage: true,
+      errorMessage: '批号生成失败，请检查物料批号规则后重试'
+    }
+  )
+  if (!data) throw new Error('批号生成失败，请检查物料批号规则后重试')
+  return data
+}
 
 async function attachSuppliers(rows: ScmPurchaseDocument[]) {
   const ids = [...new Set(rows.flatMap((row) => (row.supplierId ? [row.supplierId] : [])))]
@@ -100,19 +345,27 @@ export async function fetchScmPurchaseDocuments(
 async function attachRequestQuantities(rows: ScmPurchaseDocument[]) {
   const data = await fetchPurchaseChildren(
     'purchase_order',
-    rows.map((row) => row.id)
+    rows.map((row) => row.id),
+    [...new Set(rows.map((row) => row.tenantId))]
   )
   const used = new Map<string, number>()
   for (const order of data)
     for (const line of order.lines)
-      if (line.sourceLineId)
-        used.set(line.sourceLineId, (used.get(line.sourceLineId) ?? 0) + Number(line.quantity))
+      if (line.sourceLineId && (line.sourcePurchaseDocumentId || order.sourceId))
+        used.set(
+          `${line.sourcePurchaseDocumentId || order.sourceId}:${line.sourceLineId}`,
+          (used.get(`${line.sourcePurchaseDocumentId || order.sourceId}:${line.sourceLineId}`) ??
+            0) + Number(line.sourceQuantity ?? line.quantity)
+        )
   return rows.map((row) => ({
     ...row,
     lines: row.lines.map((line) => ({
       ...line,
-      purchasedQuantity: used.get(line.lineId) ?? 0,
-      remainingQuantity: Math.max(0, Number(line.quantity) - (used.get(line.lineId) ?? 0))
+      purchasedQuantity: used.get(`${row.id}:${line.lineId}`) ?? 0,
+      remainingQuantity: Math.max(
+        0,
+        Number(line.quantity) - (used.get(`${row.id}:${line.lineId}`) ?? 0)
+      )
     }))
   }))
 }
@@ -122,58 +375,151 @@ type PurchaseChild = Pick<
   'id' | 'sourceId' | 'status' | 'lines' | 'documentDate'
 >
 
-async function fetchPurchaseChildren(kind: ScmPurchaseKind, sourceIds: string[]) {
+async function fetchPurchaseChildren(
+  kind: ScmPurchaseKind,
+  sourceIds: string[],
+  tenantIds: string[] = []
+) {
   if (!sourceIds.length) return [] as PurchaseChild[]
+  const result = await fetchAllRangePages<PurchaseChild>(({ from, to }) => {
+    let request = supabase
+      .from('scm_purchase_document')
+      .select('id,source_id,status,lines,document_date')
+      .eq('kind', kind)
+      .neq('status', 'cancelled')
+      .order('id')
+      .range(from, to)
+    if (kind === 'purchase_order') {
+      if (tenantIds.length) request = request.in('tenant_id', tenantIds)
+    } else request = request.in('source_id', sourceIds)
+    return responseHandle<PurchaseChild[]>(() => request, {
+      breakReturn: true,
+      showErrorMessage: true,
+      errorMessage: '来源数量加载失败，请稍后重试'
+    })
+  })
+  if (result.error) throw result.error
+  return result.data ?? []
+}
+
+async function fetchReceiptDocuments(tenantId: string) {
   const result = await fetchAllRangePages<PurchaseChild>(({ from, to }) =>
     responseHandle<PurchaseChild[]>(
       () =>
         supabase
           .from('scm_purchase_document')
           .select('id,source_id,status,lines,document_date')
-          .eq('kind', kind)
-          .in('source_id', sourceIds)
+          .eq('tenant_id', tenantId)
+          .eq('kind', 'receipt_notice')
           .neq('status', 'cancelled')
           .order('id')
           .range(from, to),
-      { breakReturn: true, showErrorMessage: true, errorMessage: '来源数量加载失败，请稍后重试' }
+      { breakReturn: true, showErrorMessage: true, errorMessage: '已收料数量加载失败，请稍后重试' }
     )
   )
   if (result.error) throw result.error
   return result.data ?? []
 }
 
-async function attachOrderProgress(row: ScmPurchaseDocument) {
-  const receipts = (await fetchPurchaseChildren('receipt_notice', [row.id])).filter(
-    (item) => item.status === 'completed'
+export async function fetchScmReceiptOrderLineChoices(
+  tenantId: string,
+  supplierId: string,
+  projectId?: string
+): Promise<ScmReceiptOrderLineChoice[]> {
+  const [orderResult, receipts] = await Promise.all([
+    fetchAllRangePages<ScmPurchaseDocument>(({ from, to }) => {
+      let request = supabase
+        .from('scm_purchase_document')
+        .select(documentSelect)
+        .eq('tenant_id', tenantId)
+        .eq('kind', 'purchase_order')
+        .eq('supplier_id', supplierId)
+        .in('status', ['approved', 'completed'])
+        .order('id')
+        .range(from, to)
+      if (projectId) request = request.eq('project_id', projectId)
+      return responseHandle<ScmPurchaseDocument[]>(() => request, {
+        breakReturn: true,
+        showErrorMessage: true,
+        errorMessage: '采购订单明细加载失败，请稍后重试'
+      })
+    }),
+    fetchReceiptDocuments(tenantId)
+  ])
+  if (orderResult.error) throw orderResult.error
+  const used = new Map<string, number>()
+  for (const receipt of receipts)
+    for (const line of receipt.lines) {
+      const sourceId = line.sourcePurchaseDocumentId || receipt.sourceId
+      if (!sourceId || !line.sourceLineId) continue
+      const key = `${sourceId}:${line.sourceLineId}`
+      used.set(key, (used.get(key) ?? 0) + Number(line.quantity))
+    }
+  return (orderResult.data ?? []).flatMap((order) =>
+    order.lines.flatMap((line, index) => {
+      const key = `${order.id}:${line.lineId}`
+      const remaining = Math.max(0, Number(line.quantity) - (used.get(key) ?? 0))
+      return remaining > 0
+        ? [
+            {
+              ...line,
+              choiceId: key,
+              sourcePurchaseDocumentId: order.id,
+              sourceDocumentNo: order.documentNo,
+              sourceLineId: line.lineId,
+              sourceLineNo: line.lineNo ?? (index + 1) * 10,
+              projectId: order.projectId || '',
+              projectName: order.project?.projectName || '',
+              supplierId: order.supplierId || '',
+              quantity: remaining
+            }
+          ]
+        : []
+    })
   )
-  const received = new Map<string, number>()
-  let recentDeliveryDate: string | undefined
-  for (const receipt of receipts) {
-    if (!recentDeliveryDate || receipt.documentDate > recentDeliveryDate)
-      recentDeliveryDate = receipt.documentDate
-    for (const line of receipt.lines)
-      if (line.sourceLineId)
-        received.set(
-          line.sourceLineId,
-          (received.get(line.sourceLineId) ?? 0) + Number(line.quantity)
-        )
-  }
-  let unallocated = [...received.values()].reduce((sum, quantity) => sum + quantity, 0)
+}
+
+async function attachOrderProgress(row: ScmPurchaseDocument) {
+  const { data } = await responseHandle<
+    Array<{
+      lineId: string
+      receivedQuantity: number
+      recentDeliveryDate: string | null
+    }>
+  >(
+    () =>
+      supabase.rpc('scm_purchase_order_inbound_progress_secure', {
+        p_order_id: row.id
+      }),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '采购订单入库进度加载失败' }
+  )
+  const progress = new Map((data ?? []).map((item) => [item.lineId, item]))
+  const allocated = new Map<string, number>()
   return {
     ...row,
     lines: row.lines.map((line) => ({
       ...line,
-      receivedQuantity: received.get(line.lineId) ?? 0,
-      remainingQuantity: Math.max(0, Number(line.quantity) - (received.get(line.lineId) ?? 0))
+      receivedQuantity: Number(progress.get(line.lineId)?.receivedQuantity ?? 0),
+      remainingQuantity: Math.max(
+        0,
+        Number(line.quantity) - Number(progress.get(line.lineId)?.receivedQuantity ?? 0)
+      )
     })),
     deliveryPlans: row.deliveryPlans.map((plan) => {
-      const deliveredQuantity = Math.min(Number(plan.quantity), unallocated)
-      unallocated -= deliveredQuantity
+      const lineId = plan.lineId || row.lines[0]?.lineId || ''
+      const lineProgress = progress.get(lineId)
+      const available = Math.max(
+        0,
+        Number(lineProgress?.receivedQuantity ?? 0) - (allocated.get(lineId) ?? 0)
+      )
+      const deliveredQuantity = Math.min(Number(plan.quantity), available)
+      allocated.set(lineId, (allocated.get(lineId) ?? 0) + deliveredQuantity)
       return {
         ...plan,
         deliveredQuantity,
         remainingQuantity: Math.max(0, Number(plan.quantity) - deliveredQuantity),
-        recentDeliveryDate: deliveredQuantity > 0 ? recentDeliveryDate : undefined
+        recentDeliveryDate:
+          deliveredQuantity > 0 ? lineProgress?.recentDeliveryDate || undefined : undefined
       }
     })
   }
@@ -327,19 +673,34 @@ export async function fetchScmPurchaseSourceOptions(kind: ScmPurchaseKind, tenan
         .range(0, 499),
     { breakReturn: true, showErrorMessage: true, errorMessage: '来源单据加载失败，请稍后重试' }
   )
-  if (result.data?.length) result.data = await attachSuppliers(result.data)
+  if (result.data?.length) {
+    result.data = await attachSuppliers(result.data)
+    if (kind === 'purchase_request') result.data = await attachRequestQuantities(result.data)
+  }
   return result
 }
 
 export async function fetchScmPurchaseRemainingLines(source: ScmPurchaseDocument) {
   const childKind: ScmPurchaseKind =
     source.kind === 'purchase_request' ? 'purchase_order' : 'receipt_notice'
-  const data = await fetchPurchaseChildren(childKind, [source.id])
+  const data = await fetchPurchaseChildren(childKind, [source.id], [source.tenantId])
   const used = new Map<string, number>()
   for (const document of data)
     for (const line of document.lines)
-      if (line.sourceLineId)
-        used.set(line.sourceLineId, (used.get(line.sourceLineId) ?? 0) + Number(line.quantity))
+      if (
+        line.sourceLineId &&
+        (source.kind !== 'purchase_request' ||
+          (line.sourcePurchaseDocumentId || document.sourceId) === source.id)
+      )
+        used.set(
+          line.sourceLineId,
+          (used.get(line.sourceLineId) ?? 0) +
+            Number(
+              source.kind === 'purchase_request'
+                ? (line.sourceQuantity ?? line.quantity)
+                : line.quantity
+            )
+        )
   return source.lines.flatMap((line) => {
     const quantity = Math.max(0, Number(line.quantity) - (used.get(line.lineId) ?? 0))
     return quantity > 0

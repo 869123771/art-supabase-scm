@@ -182,6 +182,10 @@
       label: '报价费用',
       minWidth: 230,
       fixed: 'left',
+      link: {
+        permission: 'ScmQuoteExpense:View',
+        onClick: (row) => void detailDrawerRef.value?.handleOpen(row)
+      },
       formatter: (row) => (
         <div class="min-w-0 leading-5">
           <strong

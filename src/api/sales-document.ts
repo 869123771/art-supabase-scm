@@ -421,15 +421,16 @@ export async function fetchScmCustomerOptions(tenantId?: string, keyword?: strin
   })
 }
 
-export async function fetchScmMaterialOptions(tenantId?: string) {
+export async function fetchScmMaterialOptions(tenantId?: string, materialIds?: string[]) {
   let request = supabase
     .from('mdm_material')
     .select(
-      'id,tenant_id,material_code,material_name,description,specification_model,basic_unit,material_source,auxiliary_unit_id,auxiliary_unit_2_id,unit_conversions,auxiliaryUnit:mdm_unit_of_measure!mdm_material_aux_unit_fkey(unit_name),auxiliaryUnit2:mdm_unit_of_measure!mdm_material_aux_unit_2_fkey(unit_name)'
+      'id,tenant_id,material_code,material_name,description,specification_model,basic_unit,material_source,base_unit_id,purchase_unit_id,sales_unit_id,inventory_unit_id,auxiliary_unit_id,auxiliary_unit_2_id,unit_conversions,batch_management_enabled,batch_rule_id,baseUnitRecord:mdm_unit_of_measure!mdm_material_base_unit_fkey(unit_name),purchaseUnit:mdm_unit_of_measure!mdm_material_purchase_unit_id_fkey(unit_name),salesUnit:mdm_unit_of_measure!mdm_material_sales_unit_id_fkey(unit_name),inventoryUnit:mdm_unit_of_measure!mdm_material_inventory_unit_id_fkey(unit_name),auxiliaryUnit:mdm_unit_of_measure!mdm_material_aux_unit_fkey(unit_name),auxiliaryUnit2:mdm_unit_of_measure!mdm_material_aux_unit_2_fkey(unit_name)'
     )
     .order('material_name')
     .range(0, 999)
   if (tenantId) request = request.eq('tenant_id', tenantId)
+  if (materialIds?.length) request = request.in('id', materialIds)
   const response = await responseHandle<
     Array<{
       id: string
@@ -439,6 +440,16 @@ export async function fetchScmMaterialOptions(tenantId?: string) {
       description: string | null
       specificationModel: string | null
       basicUnit: string | null
+      baseUnitRecord: { unitName: string } | null
+      baseUnitId: string | null
+      purchaseUnitId: string | null
+      salesUnitId: string | null
+      salesUnit: { unitName: string } | null
+      inventoryUnitId: string | null
+      batchManagementEnabled: boolean
+      batchRuleId: string | null
+      inventoryUnit: { unitName: string } | null
+      purchaseUnit: { unitName: string } | null
       materialSource: string | null
       auxiliaryUnitId: string | null
       auxiliaryUnit2Id: string | null
@@ -462,6 +473,16 @@ export async function fetchScmMaterialOptions(tenantId?: string) {
     materialDescription: row.description || row.materialName,
     specification: row.specificationModel,
     unit: row.basicUnit,
+    baseUnitName: row.baseUnitRecord?.unitName,
+    baseUnitId: row.baseUnitId,
+    purchaseUnitId: row.purchaseUnitId,
+    salesUnitId: row.salesUnitId,
+    salesUnit: row.salesUnit?.unitName,
+    inventoryUnitId: row.inventoryUnitId,
+    stockUnit: row.inventoryUnit?.unitName,
+    purchaseUnit: row.purchaseUnit?.unitName,
+    batchManagementEnabled: row.batchManagementEnabled,
+    batchRuleId: row.batchRuleId,
     materialSource: row.materialSource,
     auxiliaryUnit: row.auxiliaryUnit?.unitName,
     auxiliaryUnit2: row.auxiliaryUnit2?.unitName,

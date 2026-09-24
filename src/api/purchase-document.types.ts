@@ -12,22 +12,43 @@ export type ScmPurchaseStatus =
 
 export interface ScmPurchaseLine {
   lineId: string
+  lineNo?: number
   materialId: string
   materialCode: string
   materialDescription: string
   specification: string
   unit: string
+  baseUnit?: string
+  stockUnit?: string
+  stockQuantity?: number
+  baseQuantity?: number
   quantity: number
   unitPrice: number
+  taxInclusiveUnitPrice?: number
   taxRate: number
   discountMode?: string
   discountRate: number
   gift: boolean
   needDate?: string
+  department?: string
+  applicant?: string
+  applicantName?: string
+  contractNo?: string
   warehouse?: string
   location?: string
+  warehouseId?: string
+  binId?: string
+  ownerType?: 'self' | 'supplier' | 'customer'
+  ownerId?: string
+  sourcePurchaseDocumentId?: string
   sourceLineId?: string
   sourceDocumentNo?: string
+  sourceSalesDocumentId?: string
+  quotationLineId?: string
+  purchaseContractLineId?: string
+  sourceLineNo?: number
+  sourceQuantity?: number
+  suggestedSupplierId?: string
   reason?: string
   remark?: string
   auxiliaryQuantity?: number
@@ -54,6 +75,8 @@ export interface ScmPurchasePaymentPlan {
 
 export interface ScmPurchaseDeliveryPlan {
   id: string
+  lineId?: string
+  unit?: string
   plannedDate: string
   quantity: number
   plannedBaseQuantity?: number
@@ -88,9 +111,12 @@ export interface ScmPurchaseDetails {
   startDate?: string
   endDate?: string
   effectiveness?: string
+  contractStatus?: string
   receiptDescription?: string
   contractNo?: string
   paymentMode?: 'ratio' | 'amount'
+  ownerType?: 'self' | 'supplier' | 'customer'
+  ownerId?: string
 }
 
 export interface ScmPurchaseDocument {

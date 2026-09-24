@@ -150,6 +150,7 @@
     defineProps<{
       materials: ScmMaterialOption[]
       disabled: boolean
+      quotation?: boolean
       contract?: boolean
       order?: boolean
       engineering?: boolean
@@ -165,6 +166,7 @@
       discountOptions: Array<{ label: string; value: string }>
     }>(),
     {
+      quotation: false,
       contract: false,
       order: false,
       engineering: false,
@@ -230,7 +232,7 @@
           ...line,
           documentNo: document.documentNo,
           sourceDocumentId: document.id,
-          lineNo: index + 1
+          lineNo: line.lineNo ?? (index + 1) * 10
         }))
       )
       .filter(
@@ -259,6 +261,7 @@
   function newLine(): ScmDocumentLine {
     return {
       lineId: crypto.randomUUID(),
+      lineNo: Math.max(0, ...lines.value.map((line) => Number(line.lineNo) || 0)) + 10,
       materialId: '',
       materialCode: '',
       materialDescription: '',
@@ -306,6 +309,26 @@
       align: 'center',
       formatter: (row) => String(lines.value.findIndex((line) => line.lineId === row.lineId) + 1)
     },
+    ...(props.quotation
+      ? [
+          {
+            prop: 'lineNo',
+            label: '行号',
+            width: 100,
+            fixed: 'left' as const,
+            formatter: (row: ScmDocumentLine) => (
+              <ElInputNumber
+                v-model={row.lineNo}
+                min={1}
+                precision={0}
+                controls={false}
+                aria-label="报价明细行号"
+                class="w-full!"
+              />
+            )
+          }
+        ]
+      : []),
     ...(props.engineering || props.operational
       ? [
           {
@@ -754,10 +777,12 @@
       ElMessage.warning('物料明细最多 200 行')
       return
     }
+    const startLineNo = Math.max(0, ...lines.value.map((line) => Number(line.lineNo) || 0))
     lines.value = [
       ...lines.value,
-      ...ids.map((id) => {
+      ...ids.map((id, index) => {
         const line = newLine()
+        line.lineNo = startLineNo + (index + 1) * 10
         line.materialId = id
         applyMaterial(line, id)
         return line
@@ -806,9 +831,12 @@
         emit('sourceSelected', first)
         lines.value = [
           ...lines.value,
-          ...selectedQuotationLines.value.map((source) => ({
+          ...selectedQuotationLines.value.map((source, index) => ({
             ...source,
             lineId: crypto.randomUUID(),
+            lineNo:
+              Math.max(0, ...lines.value.map((line) => Number(line.lineNo) || 0)) +
+              (index + 1) * 10,
             discountMode: source.discountMode === 'fixed' ? 'percentage' : source.discountMode,
             sourceLineId: source.lineId,
             sourceDocumentId: source.sourceDocumentId,
@@ -822,6 +850,14 @@
   }
 
   async function validate(): Promise<boolean> {
+    if (
+      props.quotation &&
+      (lines.value.some((line) => !Number.isInteger(line.lineNo) || Number(line.lineNo) < 1) ||
+        new Set(lines.value.map((line) => line.lineNo)).size !== lines.value.length)
+    ) {
+      ElMessage.warning('报价明细行号须为不重复的正整数')
+      return false
+    }
     const result = await tableRef.value?.validate()
     if (!result?.valid) {
       ElMessage.warning(result?.firstError?.message ?? '请完善物料明细')

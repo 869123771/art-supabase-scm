@@ -180,6 +180,7 @@
     { key: 'baseUnitCode', title: '基本单位编码' },
     { key: 'materialCodeRuleCode', title: '物料编码规则' },
     { key: 'materialCode', title: '物料编码' },
+    { key: 'lineNo', title: '行号' },
     { key: 'materialDescription', title: '物料描述', required: true },
     { key: 'specification', title: '规格型号' },
     { key: 'brand', title: '品牌' },
@@ -1024,8 +1025,17 @@
         clauses: [],
         remark: String(row.remark ?? '').trim()
       }
+      const lineNo =
+        row.lineNo == null || row.lineNo === '' ? (input.lines.length + 1) * 10 : Number(row.lineNo)
+      if (
+        !Number.isInteger(lineNo) ||
+        lineNo < 1 ||
+        input.lines.some((line) => line.lineNo === lineNo)
+      )
+        throw new Error(`${prefix}：报价明细行号须为不重复的正整数`)
       input.lines.push({
         lineId: crypto.randomUUID(),
+        lineNo,
         materialId: material?.id ?? '',
         materialCode,
         materialDescription,

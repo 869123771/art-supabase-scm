@@ -46,6 +46,7 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
       { key: 'signedDate', label: '签订日期', type: 'date' },
       { key: 'startDate', label: '起始日期', type: 'date' },
       { key: 'endDate', label: '截止日期', type: 'date' },
+      { key: 'contractStatus', label: '合同状态', type: 'select' },
       { key: 'effectiveness', label: '生效状态', type: 'select' }
     ],
     tabs: ['payments', 'clauses'],
@@ -92,22 +93,25 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
       Copy: 'ScmPurchaseRequest:Copy',
       Edit: 'ScmPurchaseRequest:Edit',
       Delete: 'ScmPurchaseRequest:Delete',
-      Export: 'ScmPurchaseRequest:Export'
+      Export: 'ScmPurchaseRequest:Export',
+      Import: 'ScmPurchaseRequest:Import',
+      Push: 'ScmPurchaseRequest:Push',
+      Select: 'ScmPurchaseRequest:Select'
     }
   },
   purchase_order: {
     kind: 'purchase_order',
     menuName: 'ScmPurchaseOrder',
     title: '采购订单',
-    description: '按采购申请或物料创建订单，统筹价格、付款与交货计划。',
+    description: '从采购申请、合同或报价选单，统筹价格、付款与交货计划。',
     eyebrow: 'PURCHASE ORDERS',
     icon: 'ri:shopping-cart-2-line',
     numberLabel: '采购订单号',
     sourceKind: 'purchase_request',
     fields: [
       { key: 'buyer', label: '采购员', type: 'input' },
-      { key: 'department', label: '需求部门', type: 'input' },
-      { key: 'applicant', label: '申请人', type: 'input' }
+      { key: 'ownerType', label: '货主类型', type: 'select' },
+      { key: 'ownerId', label: '货主', type: 'input' }
     ],
     tabs: ['payments', 'deliveries'],
     transitions: {
@@ -125,6 +129,9 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
       Edit: 'ScmPurchaseOrder:Edit',
       Delete: 'ScmPurchaseOrder:Delete',
       Export: 'ScmPurchaseOrder:Export',
+      Import: 'ScmPurchaseOrder:Import',
+      Push: 'ScmPurchaseOrder:Push',
+      Select: 'ScmPurchaseOrder:Select',
       Submit: 'ScmPurchaseOrder:Submit',
       Withdraw: 'ScmPurchaseOrder:Withdraw',
       Approve: 'ScmPurchaseOrder:Approve',
@@ -168,7 +175,9 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
       Complete: 'ScmReceiptNotice:Complete',
       GenerateBatch: 'ScmReceiptNotice:GenerateBatch',
       GenerateSerial: 'ScmReceiptNotice:GenerateSerial',
-      RecentPrice: 'ScmReceiptNotice:RecentPrice'
+      Import: 'ScmReceiptNotice:Import',
+      Push: 'ScmReceiptNotice:Push',
+      Select: 'ScmReceiptNotice:Select'
     }
   }
 }
