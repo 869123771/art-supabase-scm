@@ -583,6 +583,10 @@
     </template>
   </ArtDialog>
   <ArtDialog ref="sourceLineDialogRef" size="lg">
+    <ElAlert v-if="sourceLineLoadError" type="error" :closable="false" show-icon>
+      <template #title>来源明细加载失败</template>
+      <ElButton link type="primary" @click="loadSourceLines">重新加载</ElButton>
+    </ElAlert>
     <div class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
       <ElInput
         v-model="sourceLineKeyword"
@@ -642,8 +646,12 @@
     :show-pagination="false"
     reset-draft-on-open
     dialog-width="xl"
-    empty-text="暂无可参选的采购订单明细"
-    empty-description="请先确认供应商，再检查采购订单的审核状态与剩余交货数量。"
+    :empty-text="receiptSourceLoading ? '正在加载可参选明细…' : '暂无可参选的采购订单明细'"
+    :empty-description="
+      receiptSourceLoading
+        ? '正在查询当前供应商的采购订单剩余数量。'
+        : '请先确认供应商，再检查采购订单的审核状态与剩余交货数量。'
+    "
     @confirm="confirmReceiptOrderLines"
   >
     <template #trigger><span class="sr-only">参选采购订单</span></template>
@@ -687,6 +695,7 @@
   import { formatCurrencyValue } from '@/utils/ui/format'
   import {
     createScmPurchaseDocument,
+    fetchScmPurchaseDocument,
     fetchScmDocumentTypeOptions,
     fetchScmMaterialOptions,
     fetchScmPurchaseMaterialCandidates,
@@ -696,6 +705,7 @@
     fetchScmPurchaseCustomerOptions,
     fetchScmReceiptBatchOptions,
     fetchScmPurchaseProjectOptions,
+    fetchScmProjectSections,
     fetchScmPurchaseMenuIds,
     fetchScmPurchaseRemainingLines,
     generateScmReceiptBatchNo,
@@ -735,6 +745,7 @@
     copy?: boolean
     generate?: 'batch' | 'serial'
     initialSource?: ScmPurchaseDocument
+    initialSourceId?: string
     openLineSelector?: boolean
     tenantOptions: Array<{ label: string; value: string }>
     effectiveTenantId: string | null
@@ -760,7 +771,10 @@
   const materialDialogRef = ref<ArtDialogExpose>()
   const quotationDialogRef = ref<ArtDialogExpose>()
   const sourceLineDialogRef = ref<ArtDialogExpose>()
-  const receiptOrderSelectRef = ref<{ open: () => Promise<void> }>()
+  const receiptOrderSelectRef = ref<{
+    open: () => Promise<void>
+    reload: () => Promise<void>
+  }>()
   const headerFormRef = ref<{ validate: () => Promise<boolean>; clearValidate: () => void }>()
   const lineTableRef = ref<ArtTableExpose>()
   const kind = ref<ScmPurchaseKind>('purchase_contract')
@@ -768,6 +782,15 @@
   const recordId = ref<string>()
   const tenantOptions = ref<OpenOptions['tenantOptions']>([])
   const projects = ref<ScmPurchaseProjectOption[]>([])
+  const projectSections = ref<
+    Array<{
+      id: string
+      projectId: string
+      constructionNo: string
+      sectionName: string
+      status: 'active' | 'closed'
+    }>
+  >([])
   const suppliers = ref<ScmSupplierOption[]>([])
   const materials = ref<ScmMaterialOption[]>([])
   const materialCategories = ref<ScmPurchaseMaterialCategory[]>([])
@@ -776,6 +799,9 @@
   const customers = ref<ScmPurchaseCustomerOption[]>([])
   const documentTypes = ref<ScmDocumentTypeOption[]>([])
   const sourceDocuments = ref<ScmPurchaseDocument[]>([])
+  const sourceLineSource = shallowRef<ScmPurchaseDocument>()
+  const sourceLineLoadError = ref(false)
+  const receiptSourceLoading = ref(false)
   const quotations = ref<ScmSalesDocument[]>([])
   const salesContracts = ref<ScmSalesDocument[]>([])
   const salesOrders = ref<ScmSalesDocument[]>([])
@@ -2178,7 +2204,24 @@
               ? { options: userStore.getDictMap?.scmPurchaseContractStatus ?? [], disabled: true }
               : field.key === 'ownerType'
                 ? { options: userStore.getDictMap?.mdmBusinessOwnerType ?? [] }
-                : { options: userStore.getDictMap?.scmContractEffectiveness ?? [], disabled: true }
+                : field.key === 'constructionNo'
+                  ? {
+                      options: projectSections.value
+                        .filter((section) => section.projectId === header.projectId)
+                        .map((section) => ({
+                          label: `${section.constructionNo} · ${section.sectionName}`,
+                          value: section.constructionNo,
+                          disabled: section.status !== 'active'
+                        })),
+                      clearable: true,
+                      filterable: true,
+                      disabled: !header.projectId,
+                      placeholder: header.projectId ? '选择项目施工号' : '请先选择项目'
+                    }
+                  : {
+                      options: userStore.getDictMap?.scmContractEffectiveness ?? [],
+                      disabled: true
+                    }
             : { maxlength: field.span === 24 ? 500 : 120 }
     }))
   )
@@ -2187,6 +2230,7 @@
     const revision = ++referenceRevision
     referencesLoaded.value = false
     projects.value = []
+    projectSections.value = []
     suppliers.value = []
     materials.value = []
     materialCategories.value = []
@@ -2216,7 +2260,8 @@
         warehouseResult,
         binResult,
         customerResult,
-        salesOrderResult
+        salesOrderResult,
+        projectSectionResult
       ] = await Promise.all([
         fetchScmPurchaseProjectOptions(tenantId),
         fetchScmSupplierOptions(tenantId),
@@ -2252,10 +2297,12 @@
           : Promise.resolve([]),
         kind.value === 'purchase_order'
           ? fetchScmSourceOptions('sales_order', tenantId)
-          : Promise.resolve(null)
+          : Promise.resolve(null),
+        kind.value === 'receipt_notice' ? fetchScmProjectSections(tenantId) : Promise.resolve([])
       ])
       if (revision !== referenceRevision) return false
       projects.value = projectResult
+      projectSections.value = projectSectionResult
       suppliers.value = supplierResult.data ?? []
       materials.value = materialResult.data ?? []
       if (
@@ -2563,56 +2610,82 @@
       lines.value.push(newLine(option))
     }
   }
+  async function loadSourceLines(): Promise<void> {
+    const source = sourceLineSource.value
+    if (!source) return
+    sourceLineLoadError.value = false
+    sourceLineDialogRef.value?.setLoading(true)
+    try {
+      const available = await fetchScmPurchaseRemainingLines(source)
+      availableSourceLines.value = available.filter(
+        (line) => !lines.value.some((current) => current.sourceLineId === line.sourceLineId)
+      )
+      if (!availableSourceLines.value.length) ElMessage.warning('来源单据已无未转换数量')
+    } catch {
+      sourceLineLoadError.value = true
+    } finally {
+      sourceLineDialogRef.value?.setLoading(false)
+    }
+  }
   async function importSourceLines() {
     if (kind.value === 'receipt_notice') {
       if (!header.supplierId) {
         ElMessage.warning('请先参选供应商')
         return
       }
-      const choices = await fetchScmReceiptOrderLineChoices(
-        header.tenantId,
-        header.supplierId,
-        header.projectId || undefined
-      )
-      const missingIds = uniq(choices.map((choice) => choice.materialId)).filter(
-        (id) => !materials.value.some((material) => material.id === id)
-      )
-      if (missingIds.length) {
-        const { data } = await fetchScmMaterialOptions(header.tenantId, missingIds)
-        materials.value.push(...(data ?? []))
-      }
-      availableSourceLines.value = choices.filter(
-        (choice) =>
-          (!receiptSourceOrderId.value ||
-            choice.sourcePurchaseDocumentId === receiptSourceOrderId.value) &&
-          !lines.value.some(
-            (line) =>
-              line.sourcePurchaseDocumentId === choice.sourcePurchaseDocumentId &&
-              line.sourceLineId === choice.sourceLineId
-          )
-      )
       selectedSourceLineIds.value = []
+      availableSourceLines.value = []
+      receiptSourceLoading.value = true
       await nextTick()
       await receiptOrderSelectRef.value?.open()
+      try {
+        const choices = await fetchScmReceiptOrderLineChoices(
+          header.tenantId,
+          header.supplierId,
+          header.projectId || undefined
+        )
+        const missingIds = uniq(choices.map((choice) => choice.materialId)).filter(
+          (id) => !materials.value.some((material) => material.id === id)
+        )
+        if (missingIds.length) {
+          const { data } = await fetchScmMaterialOptions(header.tenantId, missingIds)
+          materials.value.push(...(data ?? []))
+        }
+        availableSourceLines.value = choices.filter(
+          (choice) =>
+            (!receiptSourceOrderId.value ||
+              choice.sourcePurchaseDocumentId === receiptSourceOrderId.value) &&
+            !lines.value.some(
+              (line) =>
+                line.sourcePurchaseDocumentId === choice.sourcePurchaseDocumentId &&
+                line.sourceLineId === choice.sourceLineId
+            )
+        )
+        await nextTick()
+        await receiptOrderSelectRef.value?.reload()
+      } catch {
+        ElMessage.warning('采购订单明细加载失败，请重新参选')
+      } finally {
+        receiptSourceLoading.value = false
+      }
       return
     }
     const source = sourceDocuments.value.find((item) => item.id === header.sourceId)
     if (!source) return
-    const available = await fetchScmPurchaseRemainingLines(source)
-    availableSourceLines.value = available.filter(
-      (line) => !lines.value.some((current) => current.sourceLineId === line.sourceLineId)
-    )
-    if (!availableSourceLines.value.length) {
-      ElMessage.warning('来源单据已无未转换数量')
-      return
-    }
+    sourceLineSource.value = source
+    sourceLineLoadError.value = false
+    availableSourceLines.value = []
     sourceLineKeyword.value = ''
     sourceLineDateRange.value = []
     selectedSourceLineIds.value = []
     await sourceLineDialogRef.value?.handleOpen(undefined, {
       title: `选择来源明细 · ${source.documentNo}`,
       confirmText: '带入选中明细',
+      loading: true,
+      loadingText: '正在加载来源明细…',
+      onOpen: loadSourceLines,
       onConfirm: () => {
+        if (sourceLineLoadError.value) return false
         const selected = availableSourceLines.value.filter((line) =>
           selectedSourceLineIds.value.includes(line.sourceLineId ?? '')
         )
@@ -2952,6 +3025,19 @@
   }
 
   function validateBusiness() {
+    if (
+      kind.value === 'receipt_notice' &&
+      header.projectId &&
+      !projectSections.value.some(
+        (section) =>
+          section.projectId === header.projectId &&
+          section.constructionNo === details.constructionNo &&
+          section.status === 'active'
+      )
+    ) {
+      ElMessage.warning('请选择当前项目下启用的施工号')
+      return false
+    }
     if (kind.value !== 'purchase_request' && !header.supplierId) {
       ElMessage.warning('请选择供应商')
       return false
@@ -3275,6 +3361,30 @@
     initializationError.value = ''
     api.setLoading(true)
     try {
+      if (options.initialSourceId) {
+        const { data: source } = await fetchScmPurchaseDocument(options.initialSourceId)
+        if (revision !== openRevision || !api.visible.value) return
+        const expectedKind =
+          options.kind === 'purchase_order' ? 'purchase_request' : 'purchase_order'
+        if (
+          !source ||
+          source.kind !== expectedKind ||
+          (options.kind === 'receipt_notice' &&
+            !['approved', 'completed'].includes(source.status)) ||
+          !source.lines.some((line) => Number(line.remainingQuantity ?? line.quantity) > 0)
+        ) {
+          initializationError.value = '来源单据已变化或没有可引用明细，请关闭后重新选择。'
+          return
+        }
+        header.tenantId = source.tenantId
+        header.projectId = source.projectId ?? ''
+        if (options.kind === 'purchase_order') header.sourceId = source.id
+        else {
+          selectAfterSupplier.value = false
+          receiptSourceOrderId.value = source.id
+          header.supplierId = source.supplierId ?? ''
+        }
+      }
       await Promise.all(
         [
           'scmContractClause',

@@ -49,6 +49,12 @@
         :data="shippingLineChoices"
         :columns="shippingLineColumns"
         :show-pagination="false"
+        :empty-text="shippingPickerLoading ? '正在加载可发明细…' : '暂无可发明细'"
+        :empty-description="
+          shippingPickerLoading
+            ? '正在核对订单状态和剩余可发数量。'
+            : '当前订单已无可下推的发货数量。'
+        "
         @confirm="confirmShippingLines"
       >
         <template #trigger><span class="hidden" /></template>
@@ -150,6 +156,8 @@
   const shippingSource = ref<ScmSalesDocument>()
   const shippingSelectedLineIds = ref<DataSelectKey[]>([])
   const shippingLineChoices = ref<Array<ScmDocumentLine & { id: string }>>([])
+  const shippingPickerLoading = ref(false)
+  let shippingPickerRevision = 0
   const shippingLineColumns: DataSelectColumn[] = [
     { prop: 'materialCode', label: '物料编码', minWidth: 150 },
     { prop: 'materialDescription', label: '物料描述', minWidth: 220 },
@@ -613,8 +621,15 @@
 
   async function openDownpush(orderId: string): Promise<void> {
     if (!orderId || !hasAuth('ScmShippingNotice:Add')) return
+    const revision = ++shippingPickerRevision
+    shippingSource.value = undefined
+    shippingSelectedLineIds.value = []
+    shippingLineChoices.value = []
+    shippingPickerLoading.value = true
+    await shippingLinePickerRef.value?.open()
     try {
       const response = await fetchScmSalesDocument(orderId)
+      if (revision !== shippingPickerRevision) return
       const order = response.data
       if (
         !order ||
@@ -622,23 +637,29 @@
         !['approved', 'fulfilling'].includes(order.status)
       ) {
         ElMessage.warning('请选一份已审核或执行中的销售订单')
+        shippingLinePickerRef.value?.close()
         return
       }
       const available = await fetchScmRemainingSourceLines(order)
+      if (revision !== shippingPickerRevision) return
       if (!available.length) {
         ElMessage.warning('此订单已无可下推的发货数量')
+        shippingLinePickerRef.value?.close()
         return
       }
       shippingSource.value = order
-      shippingSelectedLineIds.value = []
       shippingLineChoices.value = available.map((line) => ({ ...line, id: line.lineId }))
-      await shippingLinePickerRef.value?.open()
+      await nextTick()
+      await shippingLinePickerRef.value?.reload()
     } catch {
       ElMessage.warning('订单明细加载失败，请稍后重试')
+    } finally {
+      if (revision === shippingPickerRevision) shippingPickerLoading.value = false
     }
   }
 
   function confirmShippingLines(keys: DataSelectKey[] | DataSelectKey | undefined): void {
+    if (shippingPickerLoading.value) return
     const order = shippingSource.value
     if (!order) return
     const selectedKeys = Array.isArray(keys) ? keys : keys == null ? [] : [keys]

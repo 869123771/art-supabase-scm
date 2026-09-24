@@ -52,8 +52,12 @@
         "
         :show-pagination="false"
         reset-draft-on-open
-        empty-text="暂无可下推明细"
-        empty-description="此通知单的明细已经全部下推到该目标。"
+        :empty-text="pushChoicesLoading ? '正在加载可下推明细…' : '暂无可下推明细'"
+        :empty-description="
+          pushChoicesLoading
+            ? '正在核对单据状态和剩余可下推数量。'
+            : '此通知单的明细已经全部下推到该目标。'
+        "
         dialog-width="xl"
         @confirm="handlePushConfirm"
       >
@@ -141,13 +145,20 @@
       copy?: boolean
       generate?: 'batch' | 'serial'
       initialSource?: ScmPurchaseDocument
+      initialSourceId?: string
       openLineSelector?: boolean
       tenantOptions: Array<{ label: string; value: string }>
       effectiveTenantId: string | null
     }) => Promise<void>
   }>()
   const drawerRef = ref<{ handleOpen: (record: ScmPurchaseDocument) => Promise<void> }>()
-  const pushLineSelectRef = ref<{ open: () => Promise<void> }>()
+  const pushLineSelectRef = ref<{
+    open: () => Promise<void>
+    close: () => void
+    reload: () => Promise<void>
+  }>()
+  const pushChoicesLoading = ref(false)
+  let pushLoadRevision = 0
   const selectedPushLineIds = ref<string[]>([])
   const pushLineChoices = ref<ScmPurchaseLine[]>([])
   const pushReceiptId = ref('')
@@ -406,59 +417,80 @@
 
   async function openPushOrderLines(id: string, kind: ScmOrderTargetKind) {
     if (!id) return
+    const revision = ++pushLoadRevision
+    pushOrderId.value = id
+    pushOrderTargetKind.value = kind
+    selectedPushLineIds.value = []
+    pushLineChoices.value = []
+    pushChoicesLoading.value = true
+    await nextTick()
+    await pushLineSelectRef.value?.open()
     try {
       const [{ data }, pushedIds] = await Promise.all([
         fetchScmPurchaseDocument(id),
         fetchPushedOrderLineIds(id, kind)
       ])
+      if (revision !== pushLoadRevision) return
       if (
         !data ||
         data.kind !== 'purchase_order' ||
         !['approved', 'completed'].includes(data.status)
       ) {
         ElMessage.warning('请选择已审核的采购订单')
+        pushLineSelectRef.value?.close()
         return
       }
       pushLineChoices.value = data.lines.filter((line) => !pushedIds.has(line.lineId))
       if (!pushLineChoices.value.length) {
         ElMessage.warning('所选订单已无可下推到该目标的明细')
+        pushLineSelectRef.value?.close()
         return
       }
-      pushOrderId.value = id
-      pushOrderTargetKind.value = kind
-      selectedPushLineIds.value = []
       await nextTick()
-      await pushLineSelectRef.value?.open()
+      await pushLineSelectRef.value?.reload()
     } catch {
       // API 层已提示加载错误。
+    } finally {
+      if (revision === pushLoadRevision) pushChoicesLoading.value = false
     }
   }
   async function openPushLines(id: string, kind: ScmReceiptTargetKind) {
     if (!id) return
+    const revision = ++pushLoadRevision
+    pushReceiptId.value = id
+    pushTargetKind.value = kind
+    selectedPushLineIds.value = []
+    pushLineChoices.value = []
+    pushChoicesLoading.value = true
+    await nextTick()
+    await pushLineSelectRef.value?.open()
     try {
       const [{ data }, pushedIds] = await Promise.all([
         fetchScmPurchaseDocument(id),
         fetchPushedReceiptLineIds(id, kind)
       ])
+      if (revision !== pushLoadRevision) return
       if (!data || data.kind !== 'receipt_notice' || data.status !== 'completed') {
         ElMessage.warning('请选择已确认的收料通知单')
+        pushLineSelectRef.value?.close()
         return
       }
       pushLineChoices.value = data.lines.filter((line) => !pushedIds.has(line.lineId))
       if (!pushLineChoices.value.length) {
         ElMessage.warning('所选通知单已无可下推明细')
+        pushLineSelectRef.value?.close()
         return
       }
-      pushReceiptId.value = id
-      pushTargetKind.value = kind
-      selectedPushLineIds.value = []
       await nextTick()
-      await pushLineSelectRef.value?.open()
+      await pushLineSelectRef.value?.reload()
     } catch {
       /* API 层已提示加载错误。 */
+    } finally {
+      if (revision === pushLoadRevision) pushChoicesLoading.value = false
     }
   }
   async function handlePushConfirm(value: string | number | Array<string | number> | undefined) {
+    if (pushChoicesLoading.value) return
     const ids = Array.isArray(value) ? value.map(String) : []
     if (props.kind === 'purchase_order') {
       if (!ids.length || !pushOrderId.value) {
@@ -750,15 +782,9 @@
   }
   async function pushRequest(id: string) {
     if (!id || !hasAuth('ScmPurchaseOrder:Add')) return
-    const { data } = await fetchScmPurchaseDocument(id)
-    if (!data || data.kind !== 'purchase_request') return
-    if (!data.lines.some((line) => Number(line.remainingQuantity ?? line.quantity) > 0)) {
-      ElMessage.warning('所选采购申请已无待采购明细')
-      return
-    }
     await dialogRef.value?.handleOpen({
       kind: 'purchase_order',
-      initialSource: data,
+      initialSourceId: id,
       openLineSelector: true,
       tenantOptions: tenantOptions.value,
       effectiveTenantId: effectiveTenantId.value
@@ -766,22 +792,9 @@
   }
   async function pushOrderToReceipt(id: string) {
     if (!id || !hasAuth('ScmReceiptNotice:Add')) return
-    const { data } = await fetchScmPurchaseDocument(id)
-    if (
-      !data ||
-      data.kind !== 'purchase_order' ||
-      !['approved', 'completed'].includes(data.status)
-    ) {
-      ElMessage.warning('请选择已审核的采购订单')
-      return
-    }
-    if (!data.lines.some((line) => Number(line.remainingQuantity ?? line.quantity) > 0)) {
-      ElMessage.warning('所选采购订单已无待收料明细')
-      return
-    }
     await dialogRef.value?.handleOpen({
       kind: 'receipt_notice',
-      initialSource: data,
+      initialSourceId: id,
       openLineSelector: true,
       tenantOptions: tenantOptions.value,
       effectiveTenantId: effectiveTenantId.value

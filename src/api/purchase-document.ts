@@ -160,6 +160,27 @@ export async function fetchScmPurchaseProjectOptions(tenantId: string) {
   return data ?? []
 }
 
+export async function fetchScmProjectSections(tenantId: string) {
+  const { data } = await responseHandle<
+    Array<{
+      id: string
+      projectId: string
+      constructionNo: string
+      sectionName: string
+      status: 'active' | 'closed'
+    }>
+  >(
+    () =>
+      supabase
+        .from('mdm_project_construction')
+        .select('id,project_id,construction_no,section_name,status')
+        .eq('tenant_id', tenantId)
+        .order('construction_no'),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '项目施工号加载失败，请稍后重试' }
+  )
+  return data ?? []
+}
+
 export async function fetchScmPurchaseMaterialCategories(tenantId: string) {
   const { data } = await responseHandle<ScmPurchaseMaterialCategory[]>(
     () =>

@@ -1,1 +1,0 @@
-import{Dn as e,fr as t,gn as n}from"./useApi-s_02lHjl-Dgr2dVTV.js";import{t as r}from"./purchase-workspace-BmMwAeG3.js";var i=e({name:`ScmPurchaseRequest`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`purchase_request`}))}});export{i as default};

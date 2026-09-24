@@ -27,6 +27,10 @@
       />
       <ArtDialog ref="detailDialogRef" size="xl">
         <div v-if="selected" class="flex min-w-0 flex-col gap-4">
+          <ElAlert v-if="loadError" type="error" :closable="false" show-icon>
+            <template #title>目标明细加载失败</template>
+            <ElButton link type="primary" @click="loadLines">重新加载</ElButton>
+          </ElAlert>
           <ArtSectionCard title="单据信息" subtitle="记录来源采购订单及下推时间。">
             <ElDescriptions :column="2" border class="w-full" size="small">
               <ElDescriptionsItem label="目标单号">{{ selected.documentNo }}</ElDescriptionsItem>
@@ -116,6 +120,7 @@
   const search = ref<{ keyword: string }>({ keyword: '' })
   const selected = ref<ScmOrderTargetDocument>()
   const selectedLines = ref<ScmOrderTargetLine[]>([])
+  const loadError = ref(false)
   const detailDialogRef = ref<ArtDialogExpose<ScmOrderTargetDocument>>()
   const searchItems: SearchFormItem[] = [
     {
@@ -218,14 +223,29 @@
   ]
   const fetchPage = (query: { keyword?: string; from?: number; to?: number }) =>
     fetchScmOrderTargets(props.kind, { ...query, tenantId: effectiveTenantId.value || undefined })
+  async function loadLines(): Promise<void> {
+    if (!selected.value) return
+    loadError.value = false
+    detailDialogRef.value?.setLoading(true)
+    try {
+      const { data } = await fetchScmOrderTargetLines(selected.value.id)
+      selectedLines.value = data ?? []
+    } catch {
+      loadError.value = true
+    } finally {
+      detailDialogRef.value?.setLoading(false)
+    }
+  }
   async function openDetail(row: ScmOrderTargetDocument) {
     selected.value = row
     selectedLines.value = []
-    const { data } = await fetchScmOrderTargetLines(row.id)
-    selectedLines.value = data ?? []
+    loadError.value = false
     await detailDialogRef.value?.handleOpen(row, {
       title: `${config.value.title} · ${row.documentNo}`,
       confirmText: '关闭',
+      loading: true,
+      loadingText: '正在加载目标明细…',
+      onOpen: loadLines,
       onConfirm: () => true
     })
   }

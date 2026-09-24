@@ -1513,10 +1513,20 @@
     selectedShippingOrderId.value = header.sourceId || ''
     selectedShippingLines.value = []
     availableShippingLines.value = []
-    if (selectedShippingOrderId.value) await loadShippingOrderLines(selectedShippingOrderId.value)
     await shippingOrderPickerRef.value?.handleOpen(undefined, {
       title: '选单 · 销售订单明细',
       confirmText: '添加所选明细',
+      loading: Boolean(selectedShippingOrderId.value),
+      loadingText: '正在加载订单剩余明细…',
+      onOpen: async (_data, api) => {
+        try {
+          if (selectedShippingOrderId.value) {
+            await loadShippingOrderLines(selectedShippingOrderId.value)
+          }
+        } finally {
+          api.setLoading(false)
+        }
+      },
       onConfirm: () => {
         const source = sourceOptions.value.find((item) => item.id === selectedShippingOrderId.value)
         if (!source || !selectedShippingLines.value.length) {
@@ -1787,21 +1797,6 @@
   }
 
   async function handleOpen(options: OpenOptions): Promise<void> {
-    try {
-      await Promise.all(
-        [
-          'scmDiscountMode',
-          'scmPaymentPlanMode',
-          'scmTransportMode',
-          'mdmCurrency',
-          'scmTaxRate',
-          'scmSalesContractClause'
-        ].map((code) => userStore.ensureDictLoaded(code))
-      )
-    } catch {
-      ElMessage.warning('单据选项加载失败，请刷新页面重试')
-      return
-    }
     preparing = true
     kind.value = options.kind
     recordId.value = options.copy ? undefined : options.record?.id
@@ -1882,7 +1877,6 @@
     activeTab.value = 'lines'
     await nextTick()
     preparing = false
-    const referencesPromise = loadReferences(header.tenantId)
     await dialogRef.value?.handleOpen(options, {
       title: options.copy
         ? `复制${config.value.title} · ${options.record?.documentNo || ''}`
@@ -1890,18 +1884,36 @@
           ? `编辑${config.value.title} · ${options.record.documentNo}`
           : `新增${config.value.title}`,
       confirmText: recordId.value ? '保存更改' : '创建单据',
+      loading: true,
+      loadingText: '正在加载单据选项…',
       onConfirm: handleSubmit,
-      onOpen: () => {
+      onOpen: async (_openData, api) => {
         headerFormRef.value?.clearValidate()
         detailsFormRef.value?.clearValidate()
+        try {
+          await Promise.all(
+            [
+              'scmDiscountMode',
+              'scmPaymentPlanMode',
+              'scmTransportMode',
+              'mdmCurrency',
+              'scmTaxRate',
+              'scmSalesContractClause'
+            ].map((code) => userStore.ensureDictLoaded(code))
+          )
+          await loadReferences(header.tenantId)
+          if (options.openSourcePicker && kind.value === 'sales_order') {
+            await nextTick()
+            await quotationLineTableRef.value?.openSourcePicker('sales_contract')
+          }
+        } catch {
+          ElMessage.warning('单据选项加载失败，请关闭弹窗后重试')
+        } finally {
+          api.setLoading(false)
+        }
       },
       dialogProps: { closeOnClickModal: false }
     })
-    if (options.openSourcePicker && kind.value === 'sales_order') {
-      await referencesPromise
-      await nextTick()
-      await quotationLineTableRef.value?.openSourcePicker('sales_contract')
-    }
   }
 
   watch(

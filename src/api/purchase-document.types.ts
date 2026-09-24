@@ -95,6 +95,7 @@ export interface ScmPurchaseClause {
 }
 
 export interface ScmPurchaseDetails {
+  constructionNo?: string
   title?: string
   paperContractNo?: string
   buyer?: string

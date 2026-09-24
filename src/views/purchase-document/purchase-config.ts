@@ -149,6 +149,7 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
     numberLabel: '收料通知单号',
     sourceKind: 'purchase_order',
     fields: [
+      { key: 'constructionNo', label: '施工号', type: 'select' },
       { key: 'contractNo', label: '采购合同号', type: 'input' },
       { key: 'buyer', label: '采购员', type: 'input' },
       { key: 'purchasingOrganization', label: '采购组织', type: 'input' },

@@ -351,7 +351,6 @@
     })
     await nextTick()
     preparing = false
-    await loadReferences(form.tenantId)
     await dialogRef.value?.handleOpen(options, {
       title: options.copy
         ? `复制报价项 · ${options.record?.categoryName ?? ''}`
@@ -359,8 +358,17 @@
           ? `编辑报价项 · ${options.record.categoryName}`
           : '新增报价项分类',
       confirmText: recordId.value ? '保存更改' : '创建报价项',
+      loading: true,
+      loadingText: '正在加载项目与费用…',
       onConfirm: handleSubmit,
-      onOpen: () => formRef.value?.clearValidate(),
+      onOpen: async (_openData, api) => {
+        formRef.value?.clearValidate()
+        try {
+          await loadReferences(form.tenantId)
+        } finally {
+          api.setLoading(false)
+        }
+      },
       dialogProps: { closeOnClickModal: false }
     })
   }
