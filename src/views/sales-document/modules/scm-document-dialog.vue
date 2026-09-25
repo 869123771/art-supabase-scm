@@ -558,6 +558,7 @@
     fetchScmEngineeringReferenceOptions,
     fetchScmMaterialOptions,
     fetchScmProjectOptions,
+    fetchScmProjectSections,
     fetchScmRemainingSourceLines,
     fetchScmSalespersonOptions,
     fetchScmSourceOptions,
@@ -630,6 +631,15 @@
   const recordId = ref<string>()
   const tenantOptions = ref<OpenOptions['tenantOptions']>([])
   const projectOptions = ref<ScmProjectOption[]>([])
+  const projectSections = ref<
+    Array<{
+      id: string
+      projectId: string
+      constructionNo: string
+      sectionName: string
+      status: 'active' | 'closed'
+    }>
+  >([])
   const quotationDocuments = ref<ScmSalesDocument[]>([])
   const contractDocuments = ref<ScmSalesDocument[]>([])
   const selectedSalesperson = ref<EmployeeIntegrationItem[]>([])
@@ -973,32 +983,45 @@
       type: field.type,
       span: field.span ?? 12,
       props:
-        field.type === 'date'
+        field.key === 'constructionNo' && kind.value === 'shipping_notice'
           ? {
-              type: 'date',
-              valueFormat: 'YYYY-MM-DD',
-              class: 'w-full!',
-              clearable: true,
-              disabled: kind.value === 'project_quotation'
+              options: projectSections.value
+                .filter((item) => item.projectId === header.projectId && item.status === 'active')
+                .map((item) => ({
+                  label: `${item.constructionNo} · ${item.sectionName}`,
+                  value: item.constructionNo
+                })),
+              filterable: true,
+              clearable: !header.projectId,
+              disabled: !header.projectId,
+              placeholder: header.projectId ? '选择项目施工号' : '非项目业务无需施工号'
             }
-          : field.type === 'number'
+          : field.type === 'date'
             ? {
-                min: 0,
-                precision: 2,
-                controls: false,
+                type: 'date',
+                valueFormat: 'YYYY-MM-DD',
                 class: 'w-full!',
+                clearable: true,
                 disabled: kind.value === 'project_quotation'
               }
-            : field.type === 'select'
+            : field.type === 'number'
               ? {
-                  options: userStore.getDictMap?.[field.dictionary || ''] ?? [],
-                  clearable: true,
-                  disabled: kind.value === 'project_quotation' || field.key === 'salesDepartment'
-                }
-              : {
-                  maxlength: field.span === 24 ? 500 : 120,
+                  min: 0,
+                  precision: 2,
+                  controls: false,
+                  class: 'w-full!',
                   disabled: kind.value === 'project_quotation'
                 }
+              : field.type === 'select'
+                ? {
+                    options: userStore.getDictMap?.[field.dictionary || ''] ?? [],
+                    clearable: true,
+                    disabled: kind.value === 'project_quotation' || field.key === 'salesDepartment'
+                  }
+                : {
+                    maxlength: field.span === 24 ? 500 : 120,
+                    disabled: kind.value === 'project_quotation'
+                  }
     }))
   ])
 
@@ -1055,6 +1078,7 @@
   async function loadReferences(tenantId: string): Promise<void> {
     const revision = ++referenceRevision
     projectOptions.value = []
+    projectSections.value = []
     customerOptions.value = []
     materialOptions.value = []
     expenseOptions.value = []
@@ -1080,7 +1104,8 @@
         sources,
         engineering,
         quotations,
-        contracts
+        contracts,
+        sections
       ] = await Promise.all([
         fetchScmProjectOptions(tenantId),
         fetchScmCustomerOptions(tenantId),
@@ -1098,10 +1123,12 @@
           : Promise.resolve(null),
         kind.value === 'sales_order'
           ? fetchScmSourceOptions('sales_contract', tenantId)
-          : Promise.resolve(null)
+          : Promise.resolve(null),
+        kind.value === 'shipping_notice' ? fetchScmProjectSections(tenantId) : Promise.resolve([])
       ])
       if (revision !== referenceRevision) return
       projectOptions.value = projects.data ?? []
+      projectSections.value = sections
       customerOptions.value = customers.data ?? []
       materialOptions.value = materials.data ?? []
       expenseOptions.value = expenses.data ?? []
@@ -1590,6 +1617,7 @@
     header.projectId = source.projectId || ''
     header.customerId = source.customerId || ''
     header.currency = source.currency || 'CNY'
+    if (kind.value === 'shipping_notice') details.constructionNo = source.details.constructionNo
     if (kind.value === 'project_quotation') {
       Object.assign(details, source.details)
       header.documentDate = source.documentDate
@@ -1608,6 +1636,10 @@
   }
 
   function validateDetails(): boolean {
+    if (kind.value === 'shipping_notice' && header.projectId && !details.constructionNo) {
+      ElMessage.warning('项目发货通知单必须选择施工号')
+      return false
+    }
     if (config.value.sourceRequired && !header.sourceId) {
       ElMessage.warning(`请选择${config.value.sourceLabel || '来源单据'}`)
       return false
@@ -1746,6 +1778,7 @@
       }
       if (!validateDetails()) return false
       const cleanDetails: ScmDocumentDetails = { ...details }
+      if (kind.value === 'shipping_notice' && !header.projectId) delete cleanDetails.constructionNo
       const payload: ScmSalesDocumentWrite = {
         tenantId: header.tenantId,
         kind: kind.value,
@@ -1938,6 +1971,7 @@
       const project = projectOptions.value.find((item) => item.id === projectId)
       if (project?.customerId) header.customerId = project.customerId
       if (projectId) details.plannedProjectName = project?.projectName ?? details.plannedProjectName
+      if (kind.value === 'shipping_notice') details.constructionNo = undefined
     }
   )
   watch(

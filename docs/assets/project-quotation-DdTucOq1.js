@@ -1,1 +1,0 @@
-import{Dn as e,fr as t,gn as n}from"./useApi-s_02lHjl-Dgr2dVTV.js";import{t as r}from"./scm-document-workspace-CHzPK-z2.js";var i=e({name:`ScmProjectQuotation`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`project_quotation`}))}});export{i as default};

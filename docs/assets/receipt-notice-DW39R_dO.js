@@ -1,1 +1,0 @@
-import{Dn as e,fr as t,gn as n}from"./useApi-s_02lHjl-Dgr2dVTV.js";import{t as r}from"./purchase-workspace-CTdoAh5w.js";var i=e({name:`ScmReceiptNotice`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`receipt_notice`}))}});export{i as default};

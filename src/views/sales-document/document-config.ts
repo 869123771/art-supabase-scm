@@ -264,7 +264,7 @@ const shippingNotice: ScmDocumentConfig = {
     Complete: 'ScmShippingNotice:Complete'
   },
   title: '发货通知单',
-  description: '选取销售订单明细或直接添加物料，安排发货地址与运输方式。',
+  description: '选取销售订单明细或直接添加物料；提交后由 WMS 拣货出库并同步确认发货。',
   icon: 'ri:truck-line',
   eyebrow: 'SHIPPING NOTICES',
   numberLabel: '发货通知单号',
@@ -274,13 +274,11 @@ const shippingNotice: ScmDocumentConfig = {
   statusValues: ['draft', 'submitted', 'shipped', 'completed'],
   transitions: {
     draft: [{ status: 'submitted', action: 'Submit', label: '提交通知' }],
-    submitted: [
-      { status: 'draft', action: 'Withdraw', label: '撤回' },
-      { status: 'shipped', action: 'Ship', label: '确认发货' }
-    ],
+    submitted: [{ status: 'draft', action: 'Withdraw', label: '撤回' }],
     shipped: [{ status: 'completed', action: 'Complete', label: '发货完成' }]
   },
   fields: [
+    { key: 'constructionNo', label: '施工号', type: 'select' },
     { key: 'terminalCustomer', label: '终端客户', type: 'input' },
     { key: 'shippingAddress', label: '发货地址', type: 'input', span: 24 },
     { key: 'receivingAddress', label: '收货地址', type: 'input', span: 24 },
