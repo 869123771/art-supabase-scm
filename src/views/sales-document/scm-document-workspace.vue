@@ -591,6 +591,19 @@
         icon: 'ri:truck-line'
       })
     }
+    if (
+      props.kind === 'shipping_notice' &&
+      row.status === 'submitted' &&
+      hasAuth('WmsStockOperation:View') &&
+      hasAuth('WmsStockOperation:Issue')
+    ) {
+      actions.push({
+        auth: 'WmsStockOperation:View',
+        key: 'warehouse-issue',
+        label: '前往销售出库',
+        icon: 'ri:logout-box-r-line'
+      })
+    }
     return actions
   }
 
@@ -600,6 +613,13 @@
     if (key === 'generate-contract') return handleGenerateContract(row)
     if (key === 'convert') return openConversionDialog(row)
     if (key === 'push-shipping') return openDownpush(row.id)
+    if (key === 'warehouse-issue') {
+      await router.push({
+        path: '/wms/receipt-issue/stock-operation',
+        query: { movementType: 'sales_out', shippingNoticeId: row.id }
+      })
+      return
+    }
     if (key.startsWith('status:')) {
       const transition = (config.value.transitions[row.status] ?? []).find(
         (item) => `status:${item.status}` === key

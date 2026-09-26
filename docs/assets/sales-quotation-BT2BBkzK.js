@@ -1,1 +1,0 @@
-import{Dn as e,fr as t,gn as n}from"./useApi-s_02lHjl-Dgr2dVTV.js";import{t as r}from"./scm-document-workspace-CVdkjw21.js";var i=e({name:`ScmSalesQuotation`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`sales_quotation`}))}});export{i as default};

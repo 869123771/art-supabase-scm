@@ -71,6 +71,7 @@
   import { storeToRefs } from 'pinia'
   import dayjs from 'dayjs'
   import { ElMessage } from 'element-plus'
+  import { useRouter } from 'vue-router'
   import { useAuth } from '@/hooks/core/useAuth'
   import ArtButtonMore, {
     type ButtonMoreItem
@@ -127,6 +128,7 @@
   const config = computed(() => purchaseConfigs[props.kind])
   const { confirmAction } = useArtFeedback()
   const { hasAuth } = useAuth()
+  const router = useRouter()
   const userStore = useUserStore()
   const { isPlatformSuper } = storeToRefs(userStore)
   const tenantScopeStore = useTenantScopeStore()
@@ -510,8 +512,14 @@
       return
     }
     try {
-      await pushScmReceiptLines(pushReceiptId.value, ids, pushTargetKind.value)
+      const targetId = await pushScmReceiptLines(pushReceiptId.value, ids, pushTargetKind.value)
       await tableRef.value?.refreshUpdate()
+      if (targetId && pushTargetKind.value === 'inbound' && hasAuth('WmsReceiptInbound:View')) {
+        await router.push({
+          path: '/wms/receipt-issue/receipt-inbound',
+          query: { targetId }
+        })
+      }
     } catch {
       /* API 层已提示下推错误。 */
     }
