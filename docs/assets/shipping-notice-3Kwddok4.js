@@ -1,0 +1,1 @@
+import{Dn as e,fr as t,gn as n}from"./useApi-s_02lHjl-Dgr2dVTV.js";import{t as r}from"./scm-document-workspace-TbX10A_1.js";var i=e({name:`ScmShippingNotice`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`shipping_notice`}))}});export{i as default};

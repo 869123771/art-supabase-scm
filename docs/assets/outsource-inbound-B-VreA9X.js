@@ -1,0 +1,1 @@
+import{Dn as e,fr as t,gn as n}from"./useApi-s_02lHjl-Dgr2dVTV.js";import{t as r}from"./order-target-workspace-CEu1p1In.js";var i=e({name:`ScmOutsourceInbound`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`outsource_inbound`}))}});export{i as default};

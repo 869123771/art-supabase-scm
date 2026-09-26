@@ -11,7 +11,7 @@ export interface ScmOrderTargetDocument {
   sourceOrderId: string
   projectId: string
   supplierId: string
-  status: 'draft'
+  status: 'draft' | 'partial' | 'completed'
   totalAmount: number
   createdAt: string
   source?: { documentNo: string } | null

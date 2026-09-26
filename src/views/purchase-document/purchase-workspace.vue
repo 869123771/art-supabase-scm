@@ -500,8 +500,18 @@
         return
       }
       try {
-        await pushScmOrderLines(pushOrderId.value, ids, pushOrderTargetKind.value)
+        const targetId = await pushScmOrderLines(pushOrderId.value, ids, pushOrderTargetKind.value)
         await tableRef.value?.refreshUpdate()
+        if (
+          targetId &&
+          pushOrderTargetKind.value === 'purchase_inbound' &&
+          hasAuth('ScmPurchaseInbound:View')
+        ) {
+          await router.push({
+            path: '/scm/purchase-management/purchase-inbound',
+            query: { targetId }
+          })
+        }
       } catch {
         // API 层已提示下推错误。
       }

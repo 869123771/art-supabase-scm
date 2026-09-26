@@ -5,7 +5,7 @@
         density="compact"
         :eyebrow="config.eyebrow"
         :title="config.title"
-        description="查看由采购订单明细下推生成的目标单据草稿。"
+        description="查看由采购订单明细下推生成的目标单据与执行进度。"
         :icon="config.icon"
         :tags="[
           { label: '采购管理', type: 'primary' },
@@ -20,7 +20,7 @@
         :table-props="{
           rowKey: 'id',
           tableLayout: 'fixed',
-          emptyText: `暂无${config.title}草稿`,
+          emptyText: `暂无${config.title}目标单据`,
           emptyDescription: '在采购订单列表勾选已审核订单，通过“下推”选择目标和明细。'
         }"
         focusable
@@ -37,7 +37,9 @@
               <ElDescriptionsItem label="来源采购订单">{{
                 selected.source?.documentNo || '—'
               }}</ElDescriptionsItem>
-              <ElDescriptionsItem label="状态">待处理草稿</ElDescriptionsItem>
+              <ElDescriptionsItem label="状态">{{
+                statusLabel(selected.status)
+              }}</ElDescriptionsItem>
               <ElDescriptionsItem label="下推时间">{{
                 formatDateTime(selected.createdAt)
               }}</ElDescriptionsItem>
@@ -131,6 +133,8 @@
     }
   ]
   const formatDateTime = (value: string) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '—')
+  const statusLabel = (status: ScmOrderTargetDocument['status']) =>
+    ({ draft: '待处理', partial: '部分入库', completed: '已完成' })[status]
   const columnsFactory = (): ColumnOption<ScmOrderTargetDocument>[] => [
     {
       prop: 'documentNo',
@@ -158,7 +162,7 @@
       prop: 'status',
       label: '状态',
       width: 120,
-      formatter: () => <span class="text-[var(--art-gray-600)]">待处理草稿</span>
+      formatter: (row) => <span class="text-[var(--art-gray-600)]">{statusLabel(row.status)}</span>
     },
     {
       prop: 'totalAmount',
