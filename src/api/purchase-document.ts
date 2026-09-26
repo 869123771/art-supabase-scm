@@ -66,6 +66,7 @@ export interface ScmPurchaseWarehouseOption {
   id: string
   warehouseCode: string
   warehouseName: string
+  enableLocations: boolean
 }
 
 export interface ScmPurchaseBinOption {
@@ -73,6 +74,7 @@ export interface ScmPurchaseBinOption {
   warehouseId: string
   binCode: string
   binName: string
+  supportsSerial: boolean
 }
 
 export interface ScmPurchaseCustomerOption {
@@ -230,7 +232,7 @@ export async function fetchScmPurchaseWarehouseOptions(tenantId: string) {
     () =>
       supabase
         .from('mdm_warehouse')
-        .select('id,warehouse_code,warehouse_name')
+        .select('id,warehouse_code,warehouse_name,enable_locations')
         .eq('tenant_id', tenantId)
         .eq('status', 'enabled')
         .order('warehouse_code')
@@ -245,14 +247,47 @@ export async function fetchScmPurchaseBinOptions(tenantId: string) {
     () =>
       supabase
         .from('mdm_warehouse_bin')
-        .select('id,warehouse_id,bin_code,bin_name')
+        .select('id,warehouse_id,bin_code,bin_name,supports_serial')
         .eq('tenant_id', tenantId)
-        .eq('status', 'enabled')
+        .eq('status', 'available')
         .order('bin_code')
         .range(0, 999),
     { breakReturn: true, showErrorMessage: true, errorMessage: '仓位加载失败，请稍后重试' }
   )
   return data ?? []
+}
+
+export async function recommendScmReceiptBin(input: {
+  warehouseId: string
+  materialId: string
+  quantity: number
+}): Promise<string | null> {
+  const { data } = await responseHandle<string | null>(
+    () =>
+      supabase.rpc('wms_recommend_bin_secure', {
+        p_warehouse_id: input.warehouseId,
+        p_material_id: input.materialId,
+        p_quantity: input.quantity,
+        p_area_sqm: null
+      }),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '自动选位失败，请稍后重试' }
+  )
+  return data ?? null
+}
+
+export async function fetchScmPurchaseBinOption(tenantId: string, binId: string) {
+  const { data } = await responseHandle<ScmPurchaseBinOption>(
+    () =>
+      supabase
+        .from('mdm_warehouse_bin')
+        .select('id,warehouse_id,bin_code,bin_name,supports_serial')
+        .eq('tenant_id', tenantId)
+        .eq('id', binId)
+        .eq('status', 'available')
+        .single(),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '推荐库位加载失败，请稍后重试' }
+  )
+  return data
 }
 
 export async function fetchScmPurchaseCustomerOptions(tenantId: string) {

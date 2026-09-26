@@ -702,6 +702,8 @@
     fetchScmPurchaseMaterialCategories,
     fetchScmPurchaseWarehouseOptions,
     fetchScmPurchaseBinOptions,
+    fetchScmPurchaseBinOption,
+    recommendScmReceiptBin,
     fetchScmPurchaseCustomerOptions,
     fetchScmReceiptBatchOptions,
     fetchScmPurchaseProjectOptions,
@@ -796,6 +798,7 @@
   const materialCategories = ref<ScmPurchaseMaterialCategory[]>([])
   const warehouses = ref<ScmPurchaseWarehouseOption[]>([])
   const bins = ref<ScmPurchaseBinOption[]>([])
+  const recommendingLineId = ref<string | null>(null)
   const customers = ref<ScmPurchaseCustomerOption[]>([])
   const documentTypes = ref<ScmDocumentTypeOption[]>([])
   const sourceDocuments = ref<ScmPurchaseDocument[]>([])
@@ -1427,7 +1430,10 @@
       label: '',
       width: 48,
       formatter: (row) => (
-        <div class="grid min-w-0 grid-cols-2 gap-3 p-4 text-xs md:grid-cols-4">
+        <div
+          class="sticky left-0 grid min-w-0 grid-cols-1 gap-3 p-4 text-xs sm:grid-cols-2 lg:grid-cols-4"
+          style={{ width: 'min(100%, calc(100vw - 72px), 1020px)' }}
+        >
           <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
             需求日期
             <ElDatePicker
@@ -1520,27 +1526,60 @@
                   ))}
                 </ElSelect>
               </label>
-              <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
-                仓位
-                <ElSelect
-                  v-model={row.binId}
-                  filterable
-                  clearable
-                  placeholder="参选仓位"
-                  class="w-full!"
-                  disabled={!row.warehouseId}
-                >
-                  {bins.value
-                    .filter((bin) => bin.warehouseId === row.warehouseId)
-                    .map((bin) => (
-                      <ElOption
-                        key={bin.id}
-                        value={bin.id}
-                        label={`${bin.binCode} · ${bin.binName}`}
-                      />
-                    ))}
-                </ElSelect>
-              </label>
+              <div class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)] lg:col-span-2">
+                <span>仓位</span>
+                <div class="flex min-w-0 flex-col gap-2 sm:flex-row">
+                  <ElSelect
+                    v-model={row.binId}
+                    filterable
+                    clearable
+                    placeholder={
+                      warehouses.value.find((warehouse) => warehouse.id === row.warehouseId)
+                        ?.enableLocations === false
+                        ? '仓库直存'
+                        : '参选仓位'
+                    }
+                    class="min-w-0 flex-1!"
+                    disabled={
+                      !row.warehouseId ||
+                      warehouses.value.find((warehouse) => warehouse.id === row.warehouseId)
+                        ?.enableLocations === false
+                    }
+                  >
+                    {bins.value
+                      .filter(
+                        (bin) =>
+                          bin.warehouseId === row.warehouseId &&
+                          (!materials.value.find((material) => material.id === row.materialId)
+                            ?.serialManagementEnabled ||
+                            bin.supportsSerial)
+                      )
+                      .map((bin) => (
+                        <ElOption
+                          key={bin.id}
+                          value={bin.id}
+                          label={`${bin.binCode} · ${bin.binName}`}
+                        />
+                      ))}
+                  </ElSelect>
+                  {kind.value === 'receipt_notice' && (
+                    <ElButton
+                      loading={recommendingLineId.value === row.lineId}
+                      disabled={
+                        !row.warehouseId ||
+                        !row.materialId ||
+                        !row.stockQuantity ||
+                        row.stockQuantity <= 0 ||
+                        warehouses.value.find((warehouse) => warehouse.id === row.warehouseId)
+                          ?.enableLocations === false
+                      }
+                      onClick={() => void recommendReceiptBin(row)}
+                    >
+                      自动选位
+                    </ElButton>
+                  )}
+                </div>
+              </div>
             </>
           )}
           {kind.value === 'receipt_notice' && (
@@ -1672,6 +1711,8 @@
           class="w-full!"
           aria-label="数量"
           onChange={() => {
+            row.binId = undefined
+            row.location = ''
             recalculateReceiptUnits(row)
             recalculateOrderUnits(row)
           }}
@@ -2445,6 +2486,48 @@
         ? Math.round((baseQuantity / secondFactor) * 1000) / 1000
         : 0
   }
+  async function recommendReceiptBin(line: ScmPurchaseLine): Promise<void> {
+    if (recommendingLineId.value) return
+    recalculateReceiptUnits(line)
+    const tenantId = header.tenantId
+    const warehouseId = line.warehouseId
+    const materialId = line.materialId
+    const quantity = line.stockQuantity
+    if (!tenantId || !warehouseId || !materialId || !quantity || quantity <= 0) {
+      ElMessage.warning('请先选择仓库、物料并填写收料数量')
+      return
+    }
+    const stillCurrent = () =>
+      kind.value === 'receipt_notice' &&
+      header.tenantId === tenantId &&
+      lines.value.includes(line) &&
+      line.warehouseId === warehouseId &&
+      line.materialId === materialId &&
+      line.stockQuantity === quantity
+    recommendingLineId.value = line.lineId
+    try {
+      const binId = await recommendScmReceiptBin({ warehouseId, materialId, quantity })
+      if (!stillCurrent()) return
+      if (!binId) {
+        ElMessage.warning('当前没有符合物料、容量和库区规则的可用库位')
+        return
+      }
+      let bin = bins.value.find((item) => item.id === binId)
+      if (!bin) {
+        bin = (await fetchScmPurchaseBinOption(tenantId, binId)) ?? undefined
+        if (!stillCurrent()) return
+        if (bin) bins.value.push(bin)
+      }
+      if (!bin || bin.warehouseId !== warehouseId) throw new Error('推荐库位不在当前仓库')
+      line.binId = bin.id
+      line.location = bin.binName
+      ElMessage.success(`已选库位 ${bin.binCode}，收料记账时将再次校验`)
+    } catch {
+      ElMessage.error('自动选位失败，请重试或手动选择库位')
+    } finally {
+      recommendingLineId.value = null
+    }
+  }
   function recalculateOrderUnits(line: ScmPurchaseLine): void {
     if (kind.value !== 'purchase_order') return
     const material = materials.value.find((item) => item.id === line.materialId)
@@ -2535,6 +2618,8 @@
     return line
   }
   function selectMaterial(line: ScmPurchaseLine, id: string) {
+    line.binId = undefined
+    line.location = ''
     const material = materials.value.find((item) => item.id === id)
     line.materialCode = material?.materialCode ?? ''
     line.materialDescription = material?.materialDescription ?? ''

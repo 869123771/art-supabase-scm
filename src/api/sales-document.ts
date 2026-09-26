@@ -425,7 +425,7 @@ export async function fetchScmMaterialOptions(tenantId?: string, materialIds?: s
   let request = supabase
     .from('mdm_material')
     .select(
-      'id,tenant_id,material_code,material_name,description,specification_model,basic_unit,material_source,base_unit_id,purchase_unit_id,sales_unit_id,inventory_unit_id,auxiliary_unit_id,auxiliary_unit_2_id,unit_conversions,batch_management_enabled,batch_rule_id,baseUnitRecord:mdm_unit_of_measure!mdm_material_base_unit_fkey(unit_name),purchaseUnit:mdm_unit_of_measure!mdm_material_purchase_unit_id_fkey(unit_name),salesUnit:mdm_unit_of_measure!mdm_material_sales_unit_id_fkey(unit_name),inventoryUnit:mdm_unit_of_measure!mdm_material_inventory_unit_id_fkey(unit_name),auxiliaryUnit:mdm_unit_of_measure!mdm_material_aux_unit_fkey(unit_name),auxiliaryUnit2:mdm_unit_of_measure!mdm_material_aux_unit_2_fkey(unit_name)'
+      'id,tenant_id,material_code,material_name,description,specification_model,basic_unit,material_source,base_unit_id,purchase_unit_id,sales_unit_id,inventory_unit_id,auxiliary_unit_id,auxiliary_unit_2_id,unit_conversions,batch_management_enabled,serial_management_enabled,batch_rule_id,baseUnitRecord:mdm_unit_of_measure!mdm_material_base_unit_fkey(unit_name),purchaseUnit:mdm_unit_of_measure!mdm_material_purchase_unit_id_fkey(unit_name),salesUnit:mdm_unit_of_measure!mdm_material_sales_unit_id_fkey(unit_name),inventoryUnit:mdm_unit_of_measure!mdm_material_inventory_unit_id_fkey(unit_name),auxiliaryUnit:mdm_unit_of_measure!mdm_material_aux_unit_fkey(unit_name),auxiliaryUnit2:mdm_unit_of_measure!mdm_material_aux_unit_2_fkey(unit_name)'
     )
     .order('material_name')
     .range(0, 999)
@@ -447,6 +447,7 @@ export async function fetchScmMaterialOptions(tenantId?: string, materialIds?: s
       salesUnit: { unitName: string } | null
       inventoryUnitId: string | null
       batchManagementEnabled: boolean
+      serialManagementEnabled: boolean
       batchRuleId: string | null
       inventoryUnit: { unitName: string } | null
       purchaseUnit: { unitName: string } | null
@@ -482,6 +483,7 @@ export async function fetchScmMaterialOptions(tenantId?: string, materialIds?: s
     stockUnit: row.inventoryUnit?.unitName,
     purchaseUnit: row.purchaseUnit?.unitName,
     batchManagementEnabled: row.batchManagementEnabled,
+    serialManagementEnabled: row.serialManagementEnabled,
     batchRuleId: row.batchRuleId,
     materialSource: row.materialSource,
     auxiliaryUnit: row.auxiliaryUnit?.unitName,

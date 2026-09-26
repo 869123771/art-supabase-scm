@@ -274,6 +274,7 @@ export interface ScmMaterialOption {
   stockUnit?: string | null
   purchaseUnit?: string | null
   batchManagementEnabled?: boolean
+  serialManagementEnabled?: boolean
   batchRuleId?: string | null
   materialSource?: string | null
   auxiliaryUnit?: string | null
