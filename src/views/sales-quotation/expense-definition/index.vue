@@ -40,6 +40,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import { ElMessage, ElTag } from 'element-plus'
   import { storeToRefs } from 'pinia'
   import type { CSSProperties } from 'vue'
@@ -69,6 +70,11 @@
   } from '@scm/api'
   import ExpenseDialog from './modules/expense-dialog.vue'
   import ExpenseDetailDrawer from './modules/expense-detail-drawer.vue'
+
+  const commonEnabledDisabledStatusOptions = useDictionaryOptions(
+    'commonEnabledDisabledStatus',
+    (value) => value === 'enabled'
+  )
 
   defineOptions({ name: 'ScmQuoteExpense' })
 
@@ -132,10 +138,7 @@
       type: 'select',
       props: {
         clearable: true,
-        options: [
-          { label: '启用', value: true },
-          { label: '禁用', value: false }
-        ]
+        options: commonEnabledDisabledStatusOptions
       }
     }
   ])

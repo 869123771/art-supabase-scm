@@ -1,6 +1,6 @@
-# Art Supabase SCM · 供应链管理
+# 亿企工场 SCM · 供应链管理
 
-本仓是 [Art Supabase Pro](https://gitee.com/wangyanghub/art-supabase-pro) 的供应链管理（SCM）业务子仓，位于主仓的 `modules/art-supabase-scm`，通过 Git submodule 独立维护。
+本仓是 [亿企工场](https://gitee.com/wangyanghub/art-supabase-pro) 的供应链管理（SCM）业务子仓，位于主仓的 `modules/art-supabase-scm`，通过 Git submodule 独立维护。
 
 ## 职责边界
 

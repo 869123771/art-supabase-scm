@@ -216,7 +216,7 @@
   const { getDictMap } = storeToRefs(useUserStore())
   const feeNames = ref(new Map<string, string>())
   const clauseLabel = (value: string): string =>
-    getDictMap.value?.scmSalesContractClause?.find((item) => item.value === value)?.label || value
+    getDictMap.value?.commonContractClauseType?.find((item) => item.value === value)?.label || value
 
   const headerItems = computed<ArtDescriptionItem<ScmSalesDocument>[]>(() => [
     { key: 'documentNo', label: '单据编号', field: 'documentNo' },

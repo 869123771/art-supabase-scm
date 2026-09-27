@@ -17,6 +17,7 @@
 </template>
 
 <script setup lang="ts">
+  import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import type { FormRules } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
@@ -28,6 +29,13 @@
     type QuoteExpenseWrite,
     type ScmQuoteExpense
   } from '@scm/api'
+
+  const commonEnabledDisabledStatusOptions = useDictionaryOptions(
+    'commonEnabledDisabledStatus',
+    (value) => value === 'enabled'
+  )
+
+  const scmExpenseTagStyleOptions = useDictionaryOptions('scmExpenseTagStyle')
 
   defineOptions({ name: 'ScmQuoteExpenseDialog' })
 
@@ -102,10 +110,7 @@
       key: 'enabled',
       type: 'radioGroup',
       props: {
-        options: [
-          { label: '启用', value: true },
-          { label: '禁用', value: false }
-        ]
+        options: commonEnabledDisabledStatusOptions
       }
     },
     {
@@ -133,11 +138,7 @@
       key: 'tagStyle',
       type: 'radioGroup',
       props: {
-        options: [
-          { label: '描边', value: 'plain' },
-          { label: '浅色', value: 'light' },
-          { label: '深色', value: 'dark' }
-        ]
+        options: scmExpenseTagStyleOptions
       }
     }
   ])

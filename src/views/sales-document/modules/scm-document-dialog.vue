@@ -525,6 +525,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import dayjs from 'dayjs'
   import {
     ElCheckbox,
@@ -586,6 +587,8 @@
     contractAuxiliaryQuantity
   } from '../quotation-pricing'
   import QuotationLineTable from './quotation-line-table.vue'
+
+  const scmQuotationBusinessTypeOptions = useDictionaryOptions('scmQuotationBusinessType')
   import '../quotation-summary-table.css'
 
   defineOptions({ name: 'ScmDocumentDialog' })
@@ -725,7 +728,7 @@
     }))
   )
   const clauseOptions = computed(() =>
-    (userStore.getDictMap?.scmSalesContractClause ?? []).map((item) => ({
+    (userStore.getDictMap?.commonContractClauseType ?? []).map((item) => ({
       label: item.label ?? item.name,
       value: String(item.value)
     }))
@@ -967,10 +970,7 @@
             type: 'select',
             span: 24,
             props: {
-              options: [
-                { label: '标准产品报价', value: 'standard' },
-                { label: '项目工程报价', value: 'project' }
-              ],
+              options: scmQuotationBusinessTypeOptions,
               disabled: Boolean(recordId.value),
               placeholder: '请选择报价场景'
             }
@@ -1931,7 +1931,7 @@
               'scmTransportMode',
               'mdmCurrency',
               'scmTaxRate',
-              'scmSalesContractClause'
+              'commonContractClauseType'
             ].map((code) => userStore.ensureDictLoaded(code))
           )
           await loadReferences(header.tenantId)

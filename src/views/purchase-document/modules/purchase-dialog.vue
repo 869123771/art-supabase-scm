@@ -857,7 +857,7 @@
   const paymentPlans = ref<ScmPurchasePaymentPlan[]>([])
   const deliveryPlans = ref<ScmPurchaseDeliveryPlan[]>([])
   const clauses = ref<ScmPurchaseClause[]>([])
-  const clauseOptions = computed(() => userStore.getDictMap?.scmContractClause ?? [])
+  const clauseOptions = computed(() => userStore.getDictMap?.commonContractClauseType ?? [])
   const discountOptions = computed(() => userStore.getDictMap?.scmDiscountMode ?? [])
   const eligibleQuotations = computed(() =>
     quotations.value.filter(
@@ -1832,9 +1832,9 @@
                   row.ownerId = undefined
                 }}
               >
-                <ElOption value="self" label="自有" />
-                <ElOption value="supplier" label="供应商" />
-                <ElOption value="customer" label="客户" />
+                {(userStore.getDictMap.mdmBusinessOwnerType ?? []).map((option) => (
+                  <ElOption key={option.value} value={option.value} label={option.label} />
+                ))}
               </ElSelect>
             )
           },
@@ -3472,7 +3472,7 @@
       }
       await Promise.all(
         [
-          'scmContractClause',
+          'commonContractClauseType',
           'scmContractEffectiveness',
           'scmPurchaseContractStatus',
           'scmDiscountMode',
