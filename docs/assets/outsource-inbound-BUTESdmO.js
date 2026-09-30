@@ -1,1 +1,0 @@
-import{Zr as e,ci as t,qi as n}from"./useWebsiteConfig-CBNRkRBp.js";import{t as r}from"./order-target-workspace-CxHiRIvG.js";var i=t({name:`ScmOutsourceInbound`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`outsource_inbound`}))}});export{i as default};

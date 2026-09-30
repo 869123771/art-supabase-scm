@@ -1,0 +1,1 @@
+import{Ji as e,Qr as t,li as n}from"./useWebsiteConfig-BYSDqOQw.js";import{t as r}from"./order-target-workspace-BapY87B7.js";var i=n({name:`ScmOutsourceReceipt`,__name:`index`,setup(n){return(n,i)=>(e(),t(r,{kind:`outsource_receipt`}))}});export{i as default};

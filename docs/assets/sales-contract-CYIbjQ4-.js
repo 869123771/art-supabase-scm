@@ -1,1 +1,0 @@
-import{Zr as e,ci as t,qi as n}from"./useWebsiteConfig-CBNRkRBp.js";import{t as r}from"./scm-document-workspace-CgqJ8Why.js";var i=t({name:`ScmSalesContract`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`sales_contract`}))}});export{i as default};

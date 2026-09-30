@@ -1,1 +1,0 @@
-import{Zr as e,ci as t,qi as n}from"./useWebsiteConfig-CBNRkRBp.js";import{t as r}from"./art-permission-guard-Blws858L.js";var i=t({name:`Exception403`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{"force-denied":``,"resource-name":`目标页面`,"show-relogin":``,"viewport-centered":``}))}});export{i as default};

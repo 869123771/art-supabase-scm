@@ -838,7 +838,7 @@
           type: 'warning',
           confirmButtonText: '确认删除',
           cancelButtonText: '取消',
-          confirmButtonClass: 'el-button--danger'
+          confirmButtonType: 'danger'
         }
       )
       await deleteScmPurchaseDocument(row.id)
