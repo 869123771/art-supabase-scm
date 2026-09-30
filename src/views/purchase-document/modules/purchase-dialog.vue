@@ -609,28 +609,27 @@
     >
       当前筛选条件下没有可转换的物料。
     </div>
-    <ElCheckboxGroup
-      v-model="selectedSourceLineIds"
-      class="flex max-h-[55vh] flex-col gap-2 overflow-y-auto"
-    >
-      <ElCheckbox
-        v-for="line in filteredSourceLines"
-        :key="line.choiceId || line.sourceLineId"
-        :value="line.choiceId || line.sourceLineId"
-        class="h-auto! w-full! rounded-lg border border-[var(--el-border-color-light)] p-3!"
-      >
-        <div class="min-w-0 whitespace-normal">
-          <strong class="block break-words">{{ line.materialDescription }}</strong>
-          <span class="text-xs text-[var(--art-gray-600)]">
-            {{ line.sourceDocumentNo
-            }}<span v-if="line.sourceLineNo"> · 第 {{ line.sourceLineNo }} 行</span> ·
-            {{ line.materialCode }} · 可转换 {{ line.quantity }} {{ line.unit }}
-            <span v-if="line.projectName"> · {{ line.projectName }}</span>
-            <span v-if="line.needDate"> · 需求 {{ line.needDate }}</span>
-          </span>
-        </div>
-      </ElCheckbox>
-    </ElCheckboxGroup>
+    <ElScrollbar max-height="55vh">
+      <ElCheckboxGroup v-model="selectedSourceLineIds" class="flex flex-col gap-2">
+        <ElCheckbox
+          v-for="line in filteredSourceLines"
+          :key="line.choiceId || line.sourceLineId"
+          :value="line.choiceId || line.sourceLineId"
+          class="h-auto! w-full! rounded-lg border border-[var(--el-border-color-light)] p-3!"
+        >
+          <div class="min-w-0 whitespace-normal">
+            <strong class="block break-words">{{ line.materialDescription }}</strong>
+            <span class="text-xs text-[var(--art-gray-600)]">
+              {{ line.sourceDocumentNo
+              }}<span v-if="line.sourceLineNo"> · 第 {{ line.sourceLineNo }} 行</span> ·
+              {{ line.materialCode }} · 可转换 {{ line.quantity }} {{ line.unit }}
+              <span v-if="line.projectName"> · {{ line.projectName }}</span>
+              <span v-if="line.needDate"> · 需求 {{ line.needDate }}</span>
+            </span>
+          </div>
+        </ElCheckbox>
+      </ElCheckboxGroup>
+    </ElScrollbar>
   </ArtDialog>
   <ArtTableMultipleSelect
     v-if="kind === 'receipt_notice'"

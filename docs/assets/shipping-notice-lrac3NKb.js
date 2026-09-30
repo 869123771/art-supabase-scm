@@ -1,0 +1,1 @@
+import{Ai as e,Ji as t,Si as n}from"./sys-CPHpBK2j.js";import{t as r}from"./scm-document-workspace-COt5_qGM.js";var i=e({name:`ScmShippingNotice`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`shipping_notice`}))}});export{i as default};
