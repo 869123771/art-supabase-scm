@@ -658,6 +658,8 @@
 </template>
 
 <script setup lang="tsx">
+  import { validateArtFormForSubmit } from '@/utils/form/validate-art-form'
+  import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
   import dayjs from 'dayjs'
   import { omit, uniq } from 'lodash-es'
   import {
@@ -2268,6 +2270,7 @@
 
   async function loadReferences(tenantId: string): Promise<boolean> {
     const revision = ++referenceRevision
+    initializationError.value = ''
     referencesLoaded.value = false
     projects.value = []
     projectSections.value = []
@@ -2416,6 +2419,9 @@
       referencesLoaded.value = true
       return true
     } catch {
+      if (revision === referenceRevision) {
+        initializationError.value = '关联主数据暂时不可用，请重新加载后继续填写。'
+      }
       return false
     } finally {
       if (revision === referenceRevision) loading.value = false
@@ -3243,7 +3249,7 @@
       return false
     }
     try {
-      if (!(await headerFormRef.value?.validate())) return false
+      if (!(await validateArtFormForSubmit(headerFormRef.value))) return false
       const lineValidation = await lineTableRef.value?.validate()
       if (lineValidation && !lineValidation.valid) {
         activeTab.value = 'lines'
@@ -3251,6 +3257,12 @@
         return false
       }
       if (!validateBusiness()) return false
+    } catch (error) {
+      notifyFriendlyError(error, '采购单据校验未完成，请稍后重试', 'warning')
+      return false
+    }
+
+    try {
       const input: ScmPurchaseWrite = {
         tenantId: header.tenantId,
         kind: kind.value,
@@ -3282,7 +3294,8 @@
       else await createScmPurchaseDocument(input)
       emit('success', recordId.value ? 'edit' : 'add')
       return true
-    } catch {
+    } catch (error) {
+      notifyFriendlyError(error, '采购单据保存失败，请检查填写内容和网络后重试')
       return false
     }
   }

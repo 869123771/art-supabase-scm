@@ -1,1 +1,0 @@
-import{Ai as e,Ji as t,Si as n}from"./sys-CPHpBK2j.js";import{t as r}from"./scm-document-workspace-COt5_qGM.js";var i=e({name:`ScmProjectQuotation`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`project_quotation`}))}});export{i as default};

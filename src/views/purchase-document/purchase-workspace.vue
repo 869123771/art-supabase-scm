@@ -93,8 +93,9 @@
   import BusinessTableRowActions from '@/components/business/business-table-row-actions/index.vue'
   import BusinessTableWorkspaceActions from '@/components/business/business-table-workspace-actions/index.vue'
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
-  import { useArtFeedback } from '@/hooks/core/useArtFeedback'
-  import { useTenantScopeStore } from '@/store/modules/tenantScope'
+  import { notifyFriendlyError, useArtFeedback } from '@/hooks/core/useArtFeedback'
+  import { useTenantScopeStore } from '@/store/modules/tenant-scope'
+  import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
   import { useUserStore } from '@/store/modules/user'
   import { fetchEmployeeSelectorList } from '@/api/integration/employees'
   import type { ColumnOption } from '@/types'
@@ -133,6 +134,7 @@
   const { isPlatformSuper } = storeToRefs(userStore)
   const tenantScopeStore = useTenantScopeStore()
   const { effectiveTenantId, tenantOptions: availableTenants } = storeToRefs(tenantScopeStore)
+  const { defaultWriteTenantId } = useTenantScopeFormPolicy()
   const tenantOptions = computed(() =>
     availableTenants.value.map((tenant) => ({
       label: `${tenant.tenantName}（${tenant.tenantCode}）`,
@@ -190,7 +192,9 @@
     { prop: 'warehouse', label: '仓库', minWidth: 120 }
   ])
   const search = ref<ScmPurchaseQuery>({ keyword: '' })
-  const importTenantId = computed(() => effectiveTenantId.value || search.value.tenantId || '')
+  const importTenantId = computed(
+    () => effectiveTenantId.value || search.value.tenantId || defaultWriteTenantId.value || ''
+  )
   const requestImportColumns = [
     { key: 'requestKey', title: '导入分组号', required: true },
     { key: 'projectCode', title: '项目编码', required: true },
@@ -305,7 +309,7 @@
             ? importOrders
             : importRequests,
       onImportError: (error: Error) => {
-        ElMessage.error(error.message)
+        notifyFriendlyError(error, '导入文件解析失败，请检查模板后重试')
       }
     },
     {

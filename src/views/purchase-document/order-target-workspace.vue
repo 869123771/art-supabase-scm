@@ -78,7 +78,7 @@
   import ArtTableQuery from '@/components/core/tables/art-table-query/index.vue'
   import type { SearchFormItem } from '@/components/core/forms/art-search-bar/index.vue'
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
-  import { useTenantScopeStore } from '@/store/modules/tenantScope'
+  import { useTenantScopeStore } from '@/store/modules/tenant-scope'
   import { formatCurrencyValue } from '@/utils/ui/format'
   import type { ColumnOption } from '@/types'
   import {

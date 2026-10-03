@@ -51,6 +51,10 @@ const salesQuotation: ScmDocumentConfig = {
     Import: 'ScmSalesQuotationDoc:Import',
     Export: 'ScmSalesQuotationDoc:Export',
     Convert: 'ScmSalesQuotationDoc:Convert',
+    GenerateMaterial: 'ScmSalesQuotationDoc:GenerateMaterial',
+    GenerateWorkOrder: 'ScmSalesQuotationDoc:GenerateWorkOrder',
+    GenerateBom: 'ScmSalesQuotationDoc:GenerateBom',
+    Submit: 'ScmSalesQuotationDoc:Submit',
     Activate: 'ScmSalesQuotationDoc:Activate',
     Expire: 'ScmSalesQuotationDoc:Expire'
   },
@@ -61,21 +65,15 @@ const salesQuotation: ScmDocumentConfig = {
   numberLabel: '报价单号',
   statusValues: ['draft', 'effective', 'expired'],
   transitions: {
-    draft: [
-      {
-        status: 'effective',
-        action: 'Activate',
-        label: '生效',
-        confirm: '生效后不可直接修改报价内容。'
-      }
-    ],
+    draft: [],
     effective: [{ status: 'expired', action: 'Expire', label: '标记失效' }]
   },
   fields: [
     { key: 'effectiveDate', label: '生效日期', type: 'date' },
     { key: 'expiryDate', label: '失效日期', type: 'date' },
     { key: 'productCategory', label: '报价产品分类', type: 'input' },
-    { key: 'productName', label: '产品名称', type: 'input' },
+    { key: 'productName', label: '产品名称', type: 'select' },
+    { key: 'quotationQuantity', label: '数量', type: 'number', required: true },
     { key: 'materialDescription', label: '物料描述', type: 'input', span: 24 }
   ],
   useFees: true,
@@ -184,6 +182,7 @@ const salesContract: ScmDocumentConfig = {
   },
   fields: [
     { key: 'title', label: '合同名称', type: 'input', required: true, span: 24 },
+    { key: 'contractTotalAmount', label: '合同总金额(元)', type: 'slot' },
     { key: 'paperContractNo', label: '纸质合同号', type: 'input' },
     { key: 'salespersonId', label: '销售员', type: 'slot' },
     { key: 'signedDate', label: '签订日期', type: 'date' },
@@ -207,7 +206,6 @@ const salesOrder: ScmDocumentConfig = {
     Copy: 'ScmSalesOrder:Copy',
     Import: 'ScmSalesOrder:Import',
     Export: 'ScmSalesOrder:Export',
-    Select: 'ScmSalesOrder:Select',
     Push: 'ScmSalesOrder:Push',
     Submit: 'ScmSalesOrder:Submit',
     Withdraw: 'ScmSalesOrder:Withdraw',
@@ -278,7 +276,6 @@ const shippingNotice: ScmDocumentConfig = {
     shipped: [{ status: 'completed', action: 'Complete', label: '发货完成' }]
   },
   fields: [
-    { key: 'constructionNo', label: '施工号', type: 'select' },
     { key: 'terminalCustomer', label: '终端客户', type: 'input' },
     { key: 'shippingAddress', label: '发货地址', type: 'input', span: 24 },
     { key: 'receivingAddress', label: '收货地址', type: 'input', span: 24 },
@@ -303,13 +300,13 @@ const loading: ScmDocumentConfig = {
     Complete: 'ScmLoading:Complete'
   },
   title: '发货装车',
-  description: '从已发货通知单选择物料，登记车牌、承运人、运费和装车明细。',
+  description: '按项目和客户选择待发货通知单明细，登记车牌、承运人和装车数量。',
   icon: 'ri:truck-fill',
   eyebrow: 'VEHICLE LOADING',
   numberLabel: '装车单号',
   sourceKind: 'shipping_notice',
   sourceLabel: '来源发货通知单',
-  sourceRequired: true,
+  sourceRequired: false,
   statusValues: ['draft', 'loaded', 'completed'],
   transitions: {
     draft: [{ status: 'loaded', action: 'Load', label: '确认装车' }],

@@ -1,1 +1,0 @@
-import{Ai as e,Ji as t,Si as n}from"./sys-CPHpBK2j.js";import{t as r}from"./scm-document-workspace-COt5_qGM.js";var i=e({name:`ScmSalesContract`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`sales_contract`}))}});export{i as default};

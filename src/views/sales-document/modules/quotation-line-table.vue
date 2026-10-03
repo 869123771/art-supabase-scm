@@ -4,9 +4,11 @@
       <p class="text-xs text-[var(--art-gray-600)]">{{
         shipping
           ? '选单可批量带入销售订单明细；直接添加物料时不关联销售订单。辅助数量按物料单位换算。'
-          : contract || order
-            ? '参选来源明细或批量添加物料；金额随输入实时核算。'
-            : '直接新增空行，或从物料编码批量参选。金额随输入实时核算。'
+          : loading
+            ? '按项目和客户参选待发货通知单明细；装车数量可在表格中调整。'
+            : contract || order
+              ? '参选来源明细或批量添加物料；金额随输入实时核算。'
+              : '直接新增空行，或从物料编码批量参选。金额随输入实时核算。'
       }}</p>
       <div class="flex flex-wrap gap-2">
         <ElButton
@@ -26,6 +28,9 @@
           {{ contract || order || shipping ? '添加物料' : '参选物料' }}
         </ElButton>
         <ElButton v-if="shipping" type="primary" :disabled="disabled" @click="emit('selectOrder')">
+          <ArtSvgIcon icon="ri:file-list-3-line" /> 选单
+        </ElButton>
+        <ElButton v-if="loading" type="primary" :disabled="disabled" @click="emit('selectLoading')">
           <ArtSvgIcon icon="ri:file-list-3-line" /> 选单
         </ElButton>
         <ElButton
@@ -59,9 +64,21 @@
       :height="Math.min(450, 94 + lines.length * 53)"
       scrollbar-always-on
       class="scm-quotation-summary-table w-full"
-      :empty-text="shipping ? '暂无发货明细' : '暂无物料明细'"
+      :empty-text="
+        loading
+          ? '暂无装车明细'
+          : shipping
+            ? '暂无发货明细'
+            : quotation
+              ? '暂无报价明细'
+              : '暂无物料明细'
+      "
       :empty-description="
-        shipping ? '点击“选单”或“添加物料”开始填写。' : '点击“手工新增”或“参选物料”开始填写。'
+        loading
+          ? '点击“选单”选择待发货通知单明细。'
+          : shipping
+            ? '点击“选单”或“添加物料”开始填写。'
+            : '点击“手工新增”或“参选物料”开始填写。'
       "
     />
     <ArtTableMultipleSelect
@@ -113,6 +130,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { omit } from 'lodash-es'
   import {
     ElCheckbox,
     ElDatePicker,
@@ -134,7 +152,12 @@
   import type { ColumnOption } from '@/types'
   import { formatCurrencyValue } from '@/utils/ui/format'
   import { normalizeStringList } from '@/utils/form/normalize'
-  import type { ScmDocumentLine, ScmMaterialOption, ScmSalesDocument } from '@scm/api'
+  import {
+    fetchScmOrderSourceAllocations,
+    type ScmDocumentLine,
+    type ScmMaterialOption,
+    type ScmSalesDocument
+  } from '@scm/api'
   import '../quotation-summary-table.css'
   import {
     calculateContractLine,
@@ -156,11 +179,15 @@
       engineering?: boolean
       operational?: boolean
       shipping?: boolean
+      loading?: boolean
       manualDisabled?: boolean
       quotationDocuments?: ScmSalesDocument[]
       contractDocuments?: ScmSalesDocument[]
       projectId?: string
       customerId?: string
+      tenantId?: string
+      documentId?: string
+      defaultDeliveryDate?: string
       sourceOptions: Array<{ label: string; value: string }>
       taxRates: Array<{ label: string; value: string | number }>
       discountOptions: Array<{ label: string; value: string }>
@@ -172,6 +199,7 @@
       engineering: false,
       operational: false,
       shipping: false,
+      loading: false,
       manualDisabled: false,
       quotationDocuments: () => [],
       contractDocuments: () => []
@@ -180,6 +208,7 @@
   const emit = defineEmits<{
     sourceSelected: [source: Pick<ScmSalesDocument, 'projectId' | 'customerId' | 'currency'>]
     selectOrder: []
+    selectLoading: []
   }>()
   const pickerRef = ref<ArtDataSelectExpose>()
   const quotationPickerRef = ref<ArtDialogExpose>()
@@ -199,11 +228,19 @@
     documentNo: string
     sourceDocumentId: string
     lineNo: number
+    sourceQuantity: number
+    availableQuantity: number
   }
   const selectedQuotationLines = ref<QuotationLineChoice[]>([])
-  const quotationColumns: ColumnOption<QuotationLineChoice>[] = [
+  const contractAllocations = ref<Map<string, number>>(new Map())
+  const quotationColumns = computed<ColumnOption<QuotationLineChoice>[]>(() => [
     { type: 'selection', width: 48 },
-    { prop: 'documentNo', label: '来源单号', minWidth: 160 },
+    {
+      prop: 'documentNo',
+      label: sourcePickerKind.value === 'sales_contract' ? '合同号' : '报价单号',
+      minWidth: 160
+    },
+    { prop: 'lineNo', label: '行号', width: 80, align: 'right' },
     { prop: 'materialCode', label: '物料编码', minWidth: 150 },
     {
       prop: 'materialDescription',
@@ -211,8 +248,46 @@
       minWidth: 210,
       showOverflowTooltip: true
     },
-    { prop: 'quantity', label: '数量', width: 90, align: 'right' }
-  ]
+    ...(sourcePickerKind.value === 'sales_contract'
+      ? [
+          { prop: 'sourceQuantity', label: '销单数量', width: 100, align: 'right' as const },
+          { prop: 'availableQuantity', label: '可开单数量', width: 115, align: 'right' as const },
+          {
+            prop: 'taxInclusivePrice',
+            label: '含税单价',
+            width: 120,
+            align: 'right' as const,
+            formatter: (row: QuotationLineChoice) =>
+              formatCurrencyValue(quotationTaxInclusivePrice(row))
+          },
+          {
+            prop: 'taxInclusiveAmount',
+            label: '含税金额',
+            width: 130,
+            align: 'right' as const,
+            formatter: (row: QuotationLineChoice) =>
+              formatCurrencyValue(
+                calculateContractLine({ ...row, quantity: row.sourceQuantity }).total
+              )
+          },
+          {
+            prop: 'availableTaxInclusiveAmount',
+            label: '可开单含税金额',
+            width: 145,
+            align: 'right' as const,
+            formatter: (row: QuotationLineChoice) =>
+              formatCurrencyValue(calculateContractLine(row).total)
+          }
+        ]
+      : [{ prop: 'quantity', label: '数量', width: 90, align: 'right' as const }])
+  ])
+  function materialIdentity(line: ScmDocumentLine): string {
+    return (
+      line.materialId ||
+      line.materialCode.trim().toLocaleLowerCase() ||
+      line.materialDescription.trim().toLocaleLowerCase()
+    )
+  }
   const quotationChoiceKey = (row: QuotationLineChoice): string =>
     `${row.sourceDocumentId}:${row.lineId || row.lineNo}`
   const filteredSourceLines = computed(() => {
@@ -228,12 +303,28 @@
           (!props.customerId || document.customerId === props.customerId)
       )
       .flatMap((document) =>
-        document.lines.map((line, index) => ({
-          ...line,
-          documentNo: document.documentNo,
-          sourceDocumentId: document.id,
-          lineNo: line.lineNo ?? (index + 1) * 10
-        }))
+        document.lines.map((line, index) => {
+          const allocated = contractAllocations.value.get(`${document.id}:${line.lineId}`) ?? 0
+          const remaining =
+            sourcePickerKind.value === 'sales_contract'
+              ? Math.max(0, line.quantity - allocated)
+              : line.quantity
+          return {
+            ...line,
+            quantity: remaining,
+            sourceQuantity: line.quantity,
+            availableQuantity: remaining,
+            documentNo: document.documentNo,
+            sourceDocumentId: document.id,
+            lineNo: line.lineNo ?? (index + 1) * 10
+          }
+        })
+      )
+      .filter(
+        (line) =>
+          line.availableQuantity > 0 &&
+          (!props.order ||
+            !lines.value.some((existing) => materialIdentity(existing) === materialIdentity(line)))
       )
       .filter(
         (line) =>
@@ -266,10 +357,12 @@
       materialCode: '',
       materialDescription: '',
       materialSource: '',
+      deliveryDate: props.order ? props.defaultDeliveryDate || '' : undefined,
       quantity: 1,
       unitPrice: 0,
       taxRate: 13,
       costUnitPrice: 0,
+      quoteFactor: 1,
       gift: false,
       discountMode: 'none',
       discountRate: 0
@@ -287,6 +380,11 @@
     if (material) {
       line.materialDescription = material.materialDescription
       line.specification = material.specification ?? ''
+      line.brand = material.brand ?? ''
+      line.manufacturer = material.manufacturer ?? ''
+      line.materialCategory = material.materialCategory ?? ''
+      line.materialType = material.materialType ?? ''
+      line.baseUnit = material.baseUnitName ?? material.unit ?? ''
       line.salesUnit = material.unit ?? ''
       line.materialSource = material.materialSource ?? ''
       line.auxiliaryUnit = material.auxiliaryUnit ?? ''
@@ -464,6 +562,90 @@
         />
       )
     },
+    {
+      prop: 'baseUnit',
+      label: '基本单位',
+      width: 110,
+      formatter: (row: ScmDocumentLine) => <ElInput v-model={row.baseUnit} aria-label="基本单位" />
+    },
+    ...(props.quotation
+      ? ([
+          {
+            prop: 'specification',
+            label: '规格型号',
+            width: 150,
+            formatter: (row: ScmDocumentLine) => (
+              <ElInput v-model={row.specification} aria-label="规格型号" />
+            )
+          },
+          {
+            prop: 'brand',
+            label: '品牌',
+            width: 130,
+            formatter: (row: ScmDocumentLine) => <ElInput v-model={row.brand} aria-label="品牌" />
+          },
+          {
+            prop: 'materialCategory',
+            label: '物料分类',
+            width: 140,
+            formatter: (row: ScmDocumentLine) => (
+              <ElInput v-model={row.materialCategory} aria-label="物料分类" />
+            )
+          },
+          {
+            prop: 'materialType',
+            label: '物料类型',
+            width: 130,
+            formatter: (row: ScmDocumentLine) => (
+              <ElInput v-model={row.materialType} aria-label="物料类型" />
+            )
+          },
+          {
+            prop: 'manufacturer',
+            label: '生产厂家',
+            width: 150,
+            formatter: (row: ScmDocumentLine) => (
+              <ElInput v-model={row.manufacturer} aria-label="生产厂家" />
+            )
+          },
+          {
+            prop: 'remark',
+            label: '备注',
+            width: 170,
+            formatter: (row: ScmDocumentLine) => <ElInput v-model={row.remark} aria-label="备注" />
+          }
+        ] as ColumnOption<ScmDocumentLine>[])
+      : []),
+    ...(props.order
+      ? [
+          {
+            prop: 'deliveryDate',
+            label: '交货日期',
+            width: 180,
+            formatter: (row: ScmDocumentLine) => (
+              <ElDatePicker
+                v-model={row.deliveryDate}
+                type="date"
+                valueFormat="YYYY-MM-DD"
+                class="w-full!"
+                aria-label="订单明细交货日期"
+              />
+            )
+          }
+        ]
+      : []),
+    ...(props.operational
+      ? [
+          {
+            prop: 'remark',
+            label: '备注',
+            width: 180,
+            formatter: (row: ScmDocumentLine) => (
+              <ElInput v-model={row.remark} maxlength={300} aria-label="明细备注" />
+            )
+          }
+        ]
+      : []),
     ...(props.contract || props.order
       ? [
           {
@@ -586,6 +768,58 @@
               />
             )
           },
+          ...(props.quotation
+            ? ([
+                {
+                  prop: 'costUnitPrice',
+                  label: '成本单价（元）',
+                  width: 145,
+                  align: 'right',
+                  formatter: (row: ScmDocumentLine) => (
+                    <ElInputNumber
+                      v-model={row.costUnitPrice}
+                      min={0}
+                      precision={2}
+                      controls={false}
+                      class="w-full!"
+                      aria-label="成本单价"
+                    />
+                  )
+                },
+                {
+                  prop: 'unitCostTotal',
+                  label: '单台成本总价（元）',
+                  width: 160,
+                  align: 'right',
+                  formatter: (row: ScmDocumentLine) =>
+                    formatCurrencyValue(row.quantity * Number(row.costUnitPrice || 0))
+                },
+                {
+                  prop: 'quoteFactor',
+                  label: '报价系数',
+                  width: 120,
+                  align: 'right',
+                  formatter: (row: ScmDocumentLine) => (
+                    <ElInputNumber
+                      v-model={row.quoteFactor}
+                      min={0}
+                      precision={3}
+                      controls={false}
+                      class="w-full!"
+                      aria-label="报价系数"
+                    />
+                  )
+                },
+                {
+                  prop: 'externalQuote',
+                  label: '对外报价（元）',
+                  width: 150,
+                  align: 'right',
+                  formatter: (row: ScmDocumentLine) =>
+                    formatCurrencyValue(row.unitPrice * Number(row.quoteFactor ?? 1))
+                }
+              ] as ColumnOption<ScmDocumentLine>[])
+            : []),
           {
             prop: 'taxInclusivePrice',
             label: '含税单价（元）',
@@ -707,7 +941,7 @@
             formatter: (row: ScmDocumentLine) => <ElCheckbox v-model={row.gift} aria-label="赠品" />
           }
         ]),
-    ...(props.contract || props.order || props.shipping
+    ...(props.contract || props.order || props.shipping || props.loading
       ? [
           {
             prop: 'sourceDocumentNo',
@@ -777,6 +1011,10 @@
       ElMessage.warning('物料明细最多 200 行')
       return
     }
+    if (props.order && ids.some((id) => lines.value.some((line) => line.materialId === id))) {
+      ElMessage.warning('同一销售订单不能重复添加物料')
+      return
+    }
     const startLineNo = Math.max(0, ...lines.value.map((line) => Number(line.lineNo) || 0))
     lines.value = [
       ...lines.value,
@@ -797,6 +1035,22 @@
     await openSourcePicker('sales_quotation')
   }
   async function openSourcePicker(sourceKind: 'sales_quotation' | 'sales_contract'): Promise<void> {
+    if (props.order && sourceKind === 'sales_contract') {
+      if (!props.tenantId || !props.projectId || !props.customerId) {
+        ElMessage.warning('请先选择项目和客户，再参选合同明细')
+        return
+      }
+      try {
+        contractAllocations.value = await fetchScmOrderSourceAllocations(
+          props.tenantId,
+          props.projectId,
+          props.customerId,
+          props.documentId
+        )
+      } catch {
+        return
+      }
+    }
     sourcePickerKind.value = sourceKind
     quotationKeyword.value = ''
     selectedQuotationLines.value = []
@@ -811,6 +1065,13 @@
         if (lines.value.length + selectedQuotationLines.value.length > 200) {
           ElMessage.warning('单据明细最多 200 行')
           return false
+        }
+        if (props.order) {
+          const keys = [...lines.value, ...selectedQuotationLines.value].map(materialIdentity)
+          if (new Set(keys).size !== keys.length) {
+            ElMessage.warning('同一销售订单不能重复添加物料')
+            return false
+          }
         }
         const sourceDocuments =
           sourceKind === 'sales_contract' ? props.contractDocuments : props.quotationDocuments
@@ -832,7 +1093,7 @@
         lines.value = [
           ...lines.value,
           ...selectedQuotationLines.value.map((source, index) => ({
-            ...source,
+            ...omit(source, ['sourceQuantity', 'availableQuantity']),
             lineId: crypto.randomUUID(),
             lineNo:
               Math.max(0, ...lines.value.map((line) => Number(line.lineNo) || 0)) +
@@ -841,7 +1102,8 @@
             sourceLineId: source.lineId,
             sourceDocumentId: source.sourceDocumentId,
             sourceLineNo: source.lineNo,
-            sourceDocumentNo: source.documentNo
+            sourceDocumentNo: source.documentNo,
+            deliveryDate: props.order ? props.defaultDeliveryDate || '' : source.deliveryDate
           }))
         ]
         return true
@@ -850,6 +1112,13 @@
   }
 
   async function validate(): Promise<boolean> {
+    if (props.order) {
+      const keys = lines.value.map(materialIdentity)
+      if (new Set(keys).size !== keys.length) {
+        ElMessage.warning('同一销售订单不能重复添加物料')
+        return false
+      }
+    }
     if (
       props.quotation &&
       (lines.value.some((line) => !Number.isInteger(line.lineNo) || Number(line.lineNo) < 1) ||

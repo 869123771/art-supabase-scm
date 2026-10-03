@@ -24,10 +24,10 @@
     "check": "pnpm boundary:audit && pnpm ui:audit && pnpm typecheck && pnpm lint"
   },
   "dependencies": {
-    "art-supabase-pro": "https://github.com/869123771/art-supabase-pro/archive/6ccf889be87b7d0b400a8a1b793ca8d8c9b3cd9d.tar.gz",
-    "lodash-es": "4.18.1"
+    "art-supabase-pro": "https://github.com/869123771/art-supabase-pro/archive/6ccf889be87b7d0b400a8a1b793ca8d8c9b3cd9d.tar.gz"
   },
   "peerDependencies": {
+    "lodash-es": "^4.18.1",
     "vue": "^3.5.38"
   },
   "devDependencies": {

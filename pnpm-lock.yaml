@@ -7,7 +7,7 @@ settings:
 overrides:
   '@vue/compiler-sfc': 3.5.40
   element-plus: 2.14.3
-  pinia: 3.0.3
+  pinia: 3.0.4
   vue: 3.5.40
   vue-router: 5.2.0
 
@@ -19,7 +19,7 @@ importers:
         specifier: https://github.com/869123771/art-supabase-pro/archive/6ccf889be87b7d0b400a8a1b793ca8d8c9b3cd9d.tar.gz
         version: https://github.com/869123771/art-supabase-pro/archive/6ccf889be87b7d0b400a8a1b793ca8d8c9b3cd9d.tar.gz(@floating-ui/dom@1.8.0)(@nuxt/kit@4.5.2(magic-string@1.2.2)(rolldown@1.2.5)(unplugin@2.3.11))(@tiptap/extension-list@3.31.0(@tiptap/core@3.31.0(@tiptap/pm@3.31.0))(@tiptap/pm@3.31.0))(@tiptap/extensions@3.31.0(@tiptap/core@3.31.0(@tiptap/pm@3.31.0))(@tiptap/pm@3.31.0))(@tiptap/pm@3.31.0)(@types/sortablejs@1.15.9)(@vue/compiler-sfc@3.5.40)(antlr4ng-cli@1.0.7)(core-js@3.50.0)(esbuild@0.28.2)(rolldown@1.2.5)(typescript@6.0.3)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.103.1)(tsx@4.23.12)(yaml@2.9.0))
       lodash-es:
-        specifier: 4.18.1
+        specifier: ^4.18.1
         version: 4.18.1
       vue:
         specifier: 3.5.40
@@ -3293,7 +3293,7 @@ packages:
     peerDependencies:
       '@nuxt/kit': '>=3.0.0'
       '@pinia/nuxt': '>=0.10.0'
-      pinia: 3.0.3
+      pinia: 3.0.4
     peerDependenciesMeta:
       '@nuxt/kit':
         optional: true
@@ -3302,10 +3302,10 @@ packages:
       pinia:
         optional: true
 
-  pinia@3.0.3:
-    resolution: {integrity: sha512-ttXO/InUULUXkMHpTdp9Fj4hLpD/2AoJdmAbAeW2yu1iy1k+pkFekQXw5VpC0/5p51IOR/jDaDRfRWRnMMsGOA==}
+  pinia@3.0.4:
+    resolution: {integrity: sha512-l7pqLUFTI/+ESXn6k3nu30ZIzW5E2WZF/LaHJEpoq6ElcLD+wduZoB2kBN19du6K/4FDpPMazY2wJr+IndBtQw==}
     peerDependencies:
-      typescript: '>=4.4.4'
+      typescript: '>=4.5.0'
       vue: 3.5.40
     peerDependenciesMeta:
       typescript:
@@ -3906,7 +3906,7 @@ packages:
     peerDependencies:
       '@pinia/colada': '>=0.21.2'
       '@vue/compiler-sfc': 3.5.40
-      pinia: 3.0.3
+      pinia: 3.0.4
       vite: ^7.3.0 || ^8.0.0
       vue: 3.5.40
     peerDependenciesMeta:
@@ -5885,8 +5885,8 @@ snapshots:
       node-sql-parser: 5.4.0
       nprogress: 0.2.0
       ohash: 2.0.12
-      pinia: 3.0.3(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))
-      pinia-plugin-persistedstate: 4.7.1(@nuxt/kit@4.5.2(magic-string@1.2.2)(rolldown@1.2.5)(unplugin@2.3.11))(pinia@3.0.3(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)))
+      pinia: 3.0.4(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))
+      pinia-plugin-persistedstate: 4.7.1(@nuxt/kit@4.5.2(magic-string@1.2.2)(rolldown@1.2.5)(unplugin@2.3.11))(pinia@3.0.4(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)))
       qrcode.vue: 3.10.0(vue@3.5.40(typescript@6.0.3))
       sql-formatter: 15.8.2
       tailwindcss: 4.3.3
@@ -5894,7 +5894,7 @@ snapshots:
       vue: 3.5.40(typescript@6.0.3)
       vue-draggable-plus: 0.6.1(@types/sortablejs@1.15.9)
       vue-i18n: 11.4.8(vue@3.5.40(typescript@6.0.3))
-      vue-router: 5.2.0(@vue/compiler-sfc@3.5.40)(esbuild@0.28.2)(pinia@3.0.3(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)))(rolldown@1.2.5)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.103.1)(tsx@4.23.12)(yaml@2.9.0))(vue@3.5.40(typescript@6.0.3))
+      vue-router: 5.2.0(@vue/compiler-sfc@3.5.40)(esbuild@0.28.2)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)))(rolldown@1.2.5)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.103.1)(tsx@4.23.12)(yaml@2.9.0))(vue@3.5.40(typescript@6.0.3))
       xgplayer: 3.0.26(core-js@3.50.0)
       xlsx: 0.18.5
     transitivePeerDependencies:
@@ -7389,14 +7389,14 @@ snapshots:
 
   picomatch@4.0.5: {}
 
-  pinia-plugin-persistedstate@4.7.1(@nuxt/kit@4.5.2(magic-string@1.2.2)(rolldown@1.2.5)(unplugin@2.3.11))(pinia@3.0.3(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))):
+  pinia-plugin-persistedstate@4.7.1(@nuxt/kit@4.5.2(magic-string@1.2.2)(rolldown@1.2.5)(unplugin@2.3.11))(pinia@3.0.4(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))):
     dependencies:
       defu: 6.1.7
     optionalDependencies:
       '@nuxt/kit': 4.5.2(magic-string@1.2.2)(rolldown@1.2.5)(unplugin@2.3.11)
-      pinia: 3.0.3(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))
+      pinia: 3.0.4(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))
 
-  pinia@3.0.3(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)):
+  pinia@3.0.4(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)):
     dependencies:
       '@vue/devtools-api': 7.7.10
       vue: 3.5.40(typescript@6.0.3)
@@ -8015,7 +8015,7 @@ snapshots:
       '@vue/devtools-api': 6.5.0
       vue: 3.5.40(typescript@6.0.3)
 
-  vue-router@5.2.0(@vue/compiler-sfc@3.5.40)(esbuild@0.28.2)(pinia@3.0.3(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)))(rolldown@1.2.5)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.103.1)(tsx@4.23.12)(yaml@2.9.0))(vue@3.5.40(typescript@6.0.3)):
+  vue-router@5.2.0(@vue/compiler-sfc@3.5.40)(esbuild@0.28.2)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3)))(rolldown@1.2.5)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.103.1)(tsx@4.23.12)(yaml@2.9.0))(vue@3.5.40(typescript@6.0.3)):
     dependencies:
       '@babel/generator': 8.0.0
       '@vue-macros/common': 3.1.4(vue@3.5.40(typescript@6.0.3))
@@ -8038,7 +8038,7 @@ snapshots:
       yaml: 2.9.0
     optionalDependencies:
       '@vue/compiler-sfc': 3.5.40
-      pinia: 3.0.3(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))
+      pinia: 3.0.4(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))
       vite: 8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.103.1)(tsx@4.23.12)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@farmfe/core'

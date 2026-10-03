@@ -56,7 +56,8 @@
   import BusinessTableWorkspaceActions from '@/components/business/business-table-workspace-actions/index.vue'
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
   import { useArtFeedback } from '@/hooks/core/useArtFeedback'
-  import { useTenantScopeStore } from '@/store/modules/tenantScope'
+  import { useTenantScopeStore } from '@/store/modules/tenant-scope'
+  import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
   import { useUserStore } from '@/store/modules/user'
   import { formatCompactNumberValue, formatCurrencyValue } from '@/utils/ui/format'
   import type { ColumnOption } from '@/types'
@@ -79,6 +80,7 @@
   const { isPlatformSuper } = storeToRefs(useUserStore())
   const tenantScopeStore = useTenantScopeStore()
   const { effectiveTenantId, tenantOptions: availableTenants } = storeToRefs(tenantScopeStore)
+  const { defaultWriteTenantId } = useTenantScopeFormPolicy()
   const tenantOptions = computed(() =>
     availableTenants.value.map((tenant) => ({
       label: `${tenant.tenantName}（${tenant.tenantCode}）`,
@@ -96,7 +98,9 @@
   }>()
   const detailDrawerRef = ref<{ handleOpen: (record: ScmQuoteCategory) => Promise<void> }>()
   const search = ref<QuoteCategoryQuery>({ keyword: '' })
-  const importTenantId = computed(() => effectiveTenantId.value || search.value.tenantId || '')
+  const importTenantId = computed(
+    () => effectiveTenantId.value || search.value.tenantId || defaultWriteTenantId.value || ''
+  )
 
   const importColumns = [
     { key: 'projectCode', title: '项目编码', required: true },
@@ -107,6 +111,7 @@
     { key: 'remark', title: '备注' }
   ]
   const exportColumns = [
+    { key: 'quotationNo', title: '报价单号' },
     ...importColumns,
     { key: 'feeTotal', title: '费用合计(元)' },
     { key: 'totalAmount', title: '总价(元)' }
@@ -132,7 +137,7 @@
       label: '项目/分类',
       key: 'keyword',
       type: 'input',
-      props: { clearable: true, placeholder: '输入项目编码、名称或分类名称' }
+      props: { clearable: true, placeholder: '输入报价单号、项目或分类名称' }
     }
   ])
 
@@ -174,6 +179,13 @@
   ]
 
   const columnsFactory = (): ColumnOption<ScmQuoteCategory>[] => [
+    {
+      prop: 'quotationNo',
+      label: '报价单号',
+      minWidth: 185,
+      showOverflowTooltip: true,
+      formatter: (row) => row.quotationNo || '--'
+    },
     {
       prop: 'projectId',
       label: '项目',
@@ -248,10 +260,11 @@
           <ArtButtonTable
             type="edit"
             permission="ScmQuoteCategory:Edit"
+            disabled={Boolean(row.quotationNo)}
             onClick={() => openDialog(row)}
           />
           <ArtButtonMore
-            list={moreActions}
+            list={row.quotationNo ? [] : moreActions}
             onClick={(item: ButtonMoreItem) => {
               if (item.key === 'copy') openDialog(row, true)
               if (item.key === 'delete') void handleDelete(row)

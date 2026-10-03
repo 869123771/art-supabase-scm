@@ -22,7 +22,12 @@
       <ArtSectionCard v-if="config.fields.length" title="业务信息">
         <ArtDescriptions :data="record" :items="detailItems" :columns="2" />
       </ArtSectionCard>
-      <ArtSectionCard title="物料明细" :empty="!record.lines.length" empty-title="暂无明细">
+      <ArtSectionCard
+        title="物料明细"
+        :empty="!record.lines.length"
+        empty-title="暂无明细"
+        empty-description="单据录入物料后可在此核对数量与来源。"
+      >
         <div class="divide-y divide-[var(--el-border-color-lighter)]">
           <div
             v-for="(line, index) in record.lines"

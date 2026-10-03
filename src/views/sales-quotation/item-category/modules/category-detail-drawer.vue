@@ -67,6 +67,7 @@
     tenantId: '',
     projectId: '',
     categoryName: '',
+    quotationNo: null,
     quantity: 1,
     unitPrice: 0,
     feeItems: [],
@@ -81,6 +82,12 @@
   const feeError = ref<string | null>(null)
 
   const descriptionItems: ArtDescriptionItem<ScmQuoteCategory>[] = [
+    {
+      key: 'quotationNo',
+      label: '报价单号',
+      value: (data: ScmQuoteCategory) => data.quotationNo || '--',
+      span: 2
+    },
     {
       key: 'projectName',
       label: '项目名称',

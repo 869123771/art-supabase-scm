@@ -1,0 +1,1 @@
+import{Ci as e,Yi as t,ji as n}from"./sys-CTmdd8ec.js";import{t as r}from"./purchase-workspace-BAQC__wA.js";var i=n({name:`ScmPurchaseRequest`,__name:`index`,setup(n){return(n,i)=>(t(),e(r,{kind:`purchase_request`}))}});export{i as default};

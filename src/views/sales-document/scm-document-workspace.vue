@@ -38,6 +38,7 @@
 
       <ScmDocumentDialog ref="dialogRef" @success="handleSaved" />
       <ScmDocumentDialog ref="shippingDialogRef" @success="handleShippingSaved" />
+      <ScmDocumentDialog ref="loadingDialogRef" @success="handleLoadingSaved" />
       <ArtTableMultipleSelect
         ref="shippingLinePickerRef"
         v-model="shippingSelectedLineIds"
@@ -61,12 +62,17 @@
       </ArtTableMultipleSelect>
       <ScmDocumentDetailDrawer ref="detailDrawerRef" />
       <QuotationConversionDialog ref="conversionDialogRef" @success="handleConverted" />
+      <QuotationMaterialDialog ref="materialDialogRef" @success="handleMaterialGenerated" />
+      <QuotationWorkOrderDialog ref="workOrderDialogRef" @success="handleMaterialGenerated" />
+      <QuotationBomDialog ref="bomDialogRef" @success="handleMaterialGenerated" />
+      <MasterDataDeleteGuard ref="deleteGuardRef" />
     </div>
   </ArtPermissionGuard>
 </template>
 
 <script setup lang="tsx">
-  import { ElMessage } from 'element-plus'
+  import { ElMessage, ElTag } from 'element-plus'
+  import { startWorkflow } from '@/api/workflow'
   import { storeToRefs } from 'pinia'
   import { useRouter } from 'vue-router'
   import ArtButtonMore, {
@@ -83,14 +89,18 @@
   import type { SearchFormItem } from '@/components/core/forms/art-search-bar/index.vue'
   import type {
     ArtTableQueryExpose,
-    ArtTableQueryHeaderAction
+    ArtTableQueryHeaderAction,
+    ArtTableQueryHeaderActionContext
   } from '@/components/core/tables/art-table-query/index.vue'
   import BusinessTableRowActions from '@/components/business/business-table-row-actions/index.vue'
   import BusinessTableWorkspaceActions from '@/components/business/business-table-workspace-actions/index.vue'
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
-  import { useArtFeedback } from '@/hooks/core/useArtFeedback'
+  import MasterDataDeleteGuard from '@/components/business/master-data-delete-guard/index.vue'
+  import { notifyFriendlyError, useArtFeedback } from '@/hooks/core/useArtFeedback'
   import { useAuth } from '@/hooks/core/useAuth'
-  import { useTenantScopeStore } from '@/store/modules/tenantScope'
+  import { useRecordDeleteGuard } from '@/hooks/core/useRecordDeleteGuard'
+  import { useTenantScopeStore } from '@/store/modules/tenant-scope'
+  import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
   import { useUserStore } from '@/store/modules/user'
   import type { ColumnOption } from '@/types'
   import { formatCurrencyValue } from '@/utils/ui/format'
@@ -99,6 +109,7 @@
     deleteScmSalesDocument,
     fetchScmCustomerOptions,
     fetchScmEngineeringReferenceOptions,
+    fetchScmDocumentTypeOptions,
     fetchScmMaterialOptions,
     fetchScmProjectOptions,
     fetchScmSalesDocument,
@@ -120,6 +131,9 @@
   import ScmDocumentDialog from './modules/scm-document-dialog.vue'
   import ScmDocumentDetailDrawer from './modules/scm-document-detail-drawer.vue'
   import QuotationConversionDialog from './modules/quotation-conversion-dialog.vue'
+  import QuotationMaterialDialog from './modules/quotation-material-dialog.vue'
+  import QuotationWorkOrderDialog from './modules/quotation-work-order-dialog.vue'
+  import QuotationBomDialog from './modules/quotation-bom-dialog.vue'
 
   defineOptions({ name: 'ScmDocumentWorkspace' })
 
@@ -127,11 +141,16 @@
   const config = computed(() => scmDocumentConfigs[props.kind])
   const router = useRouter()
   const { confirmAction } = useArtFeedback()
+  const { deleteGuardRef, inspectDeleteReferences } = useRecordDeleteGuard(
+    'scm_sales_document',
+    '销售单据'
+  )
   const { hasAuth } = useAuth()
   const userStore = useUserStore()
   const { isPlatformSuper, getDictMap } = storeToRefs(userStore)
   const tenantScopeStore = useTenantScopeStore()
   const { effectiveTenantId, tenantOptions: availableTenants } = storeToRefs(tenantScopeStore)
+  const { defaultWriteTenantId } = useTenantScopeFormPolicy()
   const tenantOptions = computed(() =>
     availableTenants.value.map((tenant) => ({
       label: `${tenant.tenantName}（${tenant.tenantCode}）`,
@@ -148,10 +167,10 @@
       effectiveTenantId: string | null
       initialSource?: ScmSalesDocument
       sourceLines?: ScmDocumentLine[]
-      openSourcePicker?: boolean
     }) => Promise<void>
   }>()
   const shippingDialogRef = ref<InstanceType<typeof ScmDocumentDialog>>()
+  const loadingDialogRef = ref<InstanceType<typeof ScmDocumentDialog>>()
   const shippingLinePickerRef = ref<ArtDataSelectExpose>()
   const shippingSource = ref<ScmSalesDocument>()
   const shippingSelectedLineIds = ref<DataSelectKey[]>([])
@@ -170,10 +189,15 @@
       targets: ScmQuotationConversionTarget[]
     }) => Promise<void>
   }>()
+  const materialDialogRef = ref<{ handleOpen: (record: ScmSalesDocument) => Promise<void> }>()
+  const workOrderDialogRef = ref<{ handleOpen: (record: ScmSalesDocument) => Promise<void> }>()
+  const bomDialogRef = ref<{ handleOpen: (record: ScmSalesDocument) => Promise<void> }>()
   const search = ref<ScmSalesDocumentQuery>({ keyword: '' })
-  const importTenantId = computed(() => effectiveTenantId.value || search.value.tenantId || '')
+  const importTenantId = computed(
+    () => effectiveTenantId.value || search.value.tenantId || defaultWriteTenantId.value || ''
+  )
   const importColumns = [
-    { key: 'documentNo', title: '报价单号', required: true },
+    { key: 'documentNo', title: '导入分组号（系统生成报价单号）', required: true },
     { key: 'quotationScene', title: '报价场景（标准/工程）', required: true },
     { key: 'projectCode', title: '已有项目编码' },
     { key: 'plannedProjectName', title: '项目名称' },
@@ -273,15 +297,6 @@
       onImportError: handleImportError
     },
     {
-      permission: 'ScmSalesOrder:Select',
-      key: 'select-order-lines',
-      label: '选单',
-      icon: 'ri:file-list-3-line',
-      hidden: props.kind !== 'sales_order',
-      disabled: !hasAuth('ScmSalesOrder:Add'),
-      onClick: () => openDialog(undefined, false, true)
-    },
-    {
       permission: config.value.permissions.Add,
       type: 'add',
       label: `新增${config.value.title}`,
@@ -320,6 +335,16 @@
     props.kind === 'sales_order'
       ? [
           {
+            permission: config.value.permissions.Delete,
+            key: 'batch-delete',
+            label: '批量删除',
+            icon: 'ri:delete-bin-line',
+            selectionRequired: true,
+            disabled: (ctx) => ctx.selectedRows.some((row) => row.status !== 'draft'),
+            onClick: (ctx) =>
+              handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
+          },
+          {
             permission: 'ScmSalesOrder:Push',
             key: 'push-shipping',
             label: '下推发货单',
@@ -329,11 +354,119 @@
             onClick: (ctx) => openDownpush(String(ctx.selectedRows[0]?.id ?? ''))
           }
         ]
-      : []
+      : props.kind === 'shipping_notice' || props.kind === 'loading'
+        ? [
+            {
+              permission: config.value.permissions.Delete,
+              key: 'batch-delete',
+              label: '批量删除',
+              icon: 'ri:delete-bin-line',
+              selectionRequired: true,
+              disabled: (ctx) => ctx.selectedRows.some((row) => row.status !== 'draft'),
+              onClick: (ctx) =>
+                handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
+            },
+            ...(props.kind === 'shipping_notice'
+              ? [
+                  {
+                    permission: 'ScmLoading:Add',
+                    key: 'push-loading',
+                    label: '下推发货装车',
+                    icon: 'ri:truck-fill',
+                    selectionRequired: true,
+                    disabled: (ctx: ArtTableQueryHeaderActionContext) =>
+                      ctx.selectedRows.length !== 1 ||
+                      (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'submitted',
+                    onClick: (ctx: ArtTableQueryHeaderActionContext) =>
+                      openLoadingFromNotice(ctx.selectedRows[0] as ScmSalesDocument)
+                  }
+                ]
+              : [
+                  {
+                    permission: 'ScmLoadingOutbound:View',
+                    key: 'push-loading-outbound',
+                    label: '下推装车出库',
+                    icon: 'ri:logout-box-r-line',
+                    selectionRequired: true,
+                    disabled: (ctx: ArtTableQueryHeaderActionContext) =>
+                      ctx.selectedRows.length !== 1 ||
+                      !['loaded', 'completed'].includes(
+                        (ctx.selectedRows[0] as ScmSalesDocument)?.status
+                      ),
+                    onClick: (ctx: ArtTableQueryHeaderActionContext) =>
+                      openLoadingOutbound(ctx.selectedRows[0] as ScmSalesDocument)
+                  }
+                ])
+          ]
+        : props.kind === 'sales_quotation'
+          ? [
+              {
+                permission: config.value.permissions.GenerateMaterial,
+                key: 'generate-material',
+                label: '生成物料编码',
+                icon: 'ri:barcode-line',
+                selectionRequired: true,
+                disabled: (ctx) =>
+                  ctx.selectedRows.length !== 1 ||
+                  !hasAuth('MdmMaterialArchive:Add') ||
+                  (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'draft' ||
+                  (ctx.selectedRows[0] as ScmSalesDocument)?.workflowStatus === 'running' ||
+                  !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.some(
+                    (line) => !line.materialId
+                  ),
+                onClick: (ctx) =>
+                  void materialDialogRef.value?.handleOpen(ctx.selectedRows[0] as ScmSalesDocument)
+              },
+              {
+                permission: config.value.permissions.Delete,
+                key: 'batch-delete',
+                label: '批量删除',
+                icon: 'ri:delete-bin-line',
+                selectionRequired: true,
+                disabled: (ctx) =>
+                  ctx.selectedRows.some(
+                    (row) =>
+                      (row as ScmSalesDocument).status !== 'draft' ||
+                      (row as ScmSalesDocument).workflowStatus === 'running'
+                  ),
+                onClick: (ctx) =>
+                  handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
+              },
+              {
+                permission: config.value.permissions.GenerateWorkOrder,
+                key: 'generate-work-order',
+                label: '转生产工单',
+                icon: 'ri:hammer-line',
+                selectionRequired: true,
+                disabled: (ctx) =>
+                  ctx.selectedRows.length !== 1 ||
+                  !hasAuth('MesWorkOrder:Add') ||
+                  (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'effective' ||
+                  !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.some((line) => line.materialId),
+                onClick: (ctx) =>
+                  void workOrderDialogRef.value?.handleOpen(ctx.selectedRows[0] as ScmSalesDocument)
+              },
+              {
+                permission: config.value.permissions.GenerateBom,
+                key: 'generate-bom',
+                label: '转报价BOM',
+                icon: 'ri:node-tree',
+                selectionRequired: true,
+                disabled: (ctx) =>
+                  ctx.selectedRows.length !== 1 ||
+                  !hasAuth('MdmBomMaintenance:Add') ||
+                  (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'effective' ||
+                  !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.length ||
+                  (ctx.selectedRows[0] as ScmSalesDocument)?.lines.some((line) => !line.materialId),
+                onClick: (ctx) =>
+                  void bomDialogRef.value?.handleOpen(ctx.selectedRows[0] as ScmSalesDocument)
+              }
+            ]
+          : []
   )
 
   const columnsFactory = (): ColumnOption<ScmSalesDocument>[] => [
-    ...(props.kind === 'sales_order'
+    ...(['sales_order', 'sales_quotation', 'shipping_notice', 'loading'].includes(props.kind)
       ? [{ type: 'selection' as const, width: 48, fixed: 'left' as const }]
       : []),
     {
@@ -358,7 +491,7 @@
       minWidth: 140,
       formatter: (row) => row.documentType?.documentTypeName || '--'
     },
-    ...(props.kind === 'sales_quotation'
+    ...(['sales_quotation', 'sales_contract', 'sales_order'].includes(props.kind)
       ? [
           {
             prop: 'quotationScene',
@@ -426,6 +559,35 @@
       width: 110,
       dict: { code: 'scmDocumentStatus', display: 'tag' }
     },
+    ...(props.kind === 'sales_quotation'
+      ? [
+          {
+            prop: 'workflowStatus',
+            label: '审批状态',
+            width: 110,
+            formatter: (row: ScmSalesDocument) => {
+              const status = row.workflowStatus
+              if (!status) return '--'
+              const label = {
+                running: '审批中',
+                approved: '已通过',
+                rejected: '已驳回',
+                withdrawn: '已撤回',
+                cancelled: '已取消'
+              }[status]
+              return (
+                <ElTag
+                  type={
+                    status === 'approved' ? 'success' : status === 'running' ? 'warning' : 'info'
+                  }
+                >
+                  {label}
+                </ElTag>
+              )
+            }
+          } as ColumnOption<ScmSalesDocument>
+        ]
+      : []),
     ...(props.kind === 'sales_contract'
       ? [
           {
@@ -521,7 +683,7 @@
   }
 
   function canEdit(row: ScmSalesDocument): boolean {
-    return row.status === 'draft' || row.status === 'created'
+    return (row.status === 'draft' || row.status === 'created') && row.workflowStatus !== 'running'
   }
 
   function moreActions(row: ScmSalesDocument): ButtonMoreItem[] {
@@ -545,7 +707,24 @@
         color: 'var(--el-color-danger)'
       })
     }
+    if (
+      ['sales_quotation', 'sales_contract', 'sales_order'].includes(props.kind) &&
+      row.status === 'draft' &&
+      row.workflowStatus !== 'running'
+    ) {
+      actions.push({
+        auth: config.value.permissions.Submit,
+        key: 'submit-approval',
+        label: row.workflowStatus === 'rejected' ? '重新提交审批' : '提交审批',
+        icon: 'ri:send-plane-line'
+      })
+    }
     for (const transition of config.value.transitions[row.status] ?? []) {
+      if (
+        ['sales_contract', 'sales_order'].includes(props.kind) &&
+        ['submitted', 'approved'].includes(transition.status)
+      )
+        continue
       if (
         props.kind === 'sales_order' &&
         transition.status === 'completed' &&
@@ -592,16 +771,27 @@
       })
     }
     if (
-      props.kind === 'shipping_notice' &&
-      row.status === 'submitted' &&
-      hasAuth('WmsStockOperation:View') &&
-      hasAuth('WmsStockOperation:Issue')
+      props.kind === 'loading' &&
+      ['loaded', 'completed'].includes(row.status) &&
+      hasAuth('ScmLoadingOutbound:View')
     ) {
       actions.push({
-        auth: 'WmsStockOperation:View',
-        key: 'warehouse-issue',
-        label: '前往销售出库',
+        auth: 'ScmLoadingOutbound:View',
+        key: 'push-loading-outbound',
+        label: '下推装车出库',
         icon: 'ri:logout-box-r-line'
+      })
+    }
+    if (
+      props.kind === 'shipping_notice' &&
+      row.status === 'submitted' &&
+      hasAuth('ScmLoading:Add')
+    ) {
+      actions.push({
+        auth: 'ScmLoading:Add',
+        key: 'push-loading',
+        label: '下推发货装车',
+        icon: 'ri:truck-fill'
       })
     }
     return actions
@@ -612,14 +802,10 @@
     if (key === 'delete') return handleDelete(row)
     if (key === 'generate-contract') return handleGenerateContract(row)
     if (key === 'convert') return openConversionDialog(row)
+    if (key === 'submit-approval') return handleSubmitApproval(row)
     if (key === 'push-shipping') return openDownpush(row.id)
-    if (key === 'warehouse-issue') {
-      await router.push({
-        path: '/wms/receipt-issue/stock-operation',
-        query: { movementType: 'sales_out', shippingNoticeId: row.id }
-      })
-      return
-    }
+    if (key === 'push-loading') return openLoadingFromNotice(row)
+    if (key === 'push-loading-outbound') return openLoadingOutbound(row)
     if (key.startsWith('status:')) {
       const transition = (config.value.transitions[row.status] ?? []).find(
         (item) => `status:${item.status}` === key
@@ -628,12 +814,11 @@
     }
   }
 
-  function openDialog(record?: ScmSalesDocument, copy = false, openSourcePicker = false): void {
+  function openDialog(record?: ScmSalesDocument, copy = false): void {
     void dialogRef.value?.handleOpen({
       kind: props.kind,
       record,
       copy,
-      openSourcePicker,
       tenantOptions: tenantOptions.value,
       effectiveTenantId: effectiveTenantId.value
     })
@@ -698,7 +883,40 @@
     void router.push('/scm/sales-management/shipping-notice')
   }
 
+  function openLoadingFromNotice(notice: ScmSalesDocument): void {
+    if (
+      !hasAuth('ScmLoading:Add') ||
+      notice.kind !== 'shipping_notice' ||
+      notice.status !== 'submitted'
+    )
+      return
+    void loadingDialogRef.value?.handleOpen({
+      kind: 'loading',
+      initialSource: notice,
+      tenantOptions: tenantOptions.value,
+      effectiveTenantId: effectiveTenantId.value
+    })
+  }
+
+  function handleLoadingSaved(): void {
+    void router.push('/scm/sales-management/loading')
+  }
+
+  function openLoadingOutbound(loadingDocument: ScmSalesDocument): void {
+    if (
+      !hasAuth('ScmLoadingOutbound:View') ||
+      loadingDocument.kind !== 'loading' ||
+      !['loaded', 'completed'].includes(loadingDocument.status)
+    )
+      return
+    void router.push({
+      path: '/scm/sales-management/loading-outbound',
+      query: { loadingId: loadingDocument.id }
+    })
+  }
+
   async function handleDelete(row: ScmSalesDocument): Promise<void> {
+    if (await inspectDeleteReferences([{ id: row.id, label: row.documentNo }])) return
     try {
       await confirmAction(
         `确定删除“${row.documentNo}”吗？已被下游引用的单据无法删除。`,
@@ -710,11 +928,46 @@
           confirmButtonType: 'danger'
         }
       )
+    } catch {
+      return
+    }
+    try {
       await deleteScmSalesDocument(row.id)
       await tableRef.value?.refreshRemove()
-    } catch {
-      // 用户取消或 API 已提示业务错误。
+    } catch (error) {
+      if (!(await inspectDeleteReferences([{ id: row.id, label: row.documentNo }])))
+        notifyFriendlyError(error, '删除失败，请刷新单据状态后重试')
     }
+  }
+
+  async function handleBatchDelete(rows: ScmSalesDocument[]): Promise<void> {
+    if (!rows.length || rows.some((row) => row.status !== 'draft')) return
+    const resources = rows.map((row) => ({ id: row.id, label: row.documentNo }))
+    if (await inspectDeleteReferences(resources)) return
+    try {
+      await confirmAction(
+        `确定删除选中的 ${rows.length} 份${config.value.title}草稿吗？`,
+        `批量删除${config.value.title}`,
+        {
+          type: 'warning',
+          confirmButtonText: '确认删除',
+          cancelButtonText: '取消',
+          confirmButtonType: 'danger'
+        }
+      )
+    } catch {
+      return
+    }
+    for (const row of rows) {
+      try {
+        await deleteScmSalesDocument(row.id)
+      } catch (error) {
+        if (!(await inspectDeleteReferences(resources)))
+          notifyFriendlyError(error, `“${row.documentNo}”删除失败，请刷新后重试`)
+        break
+      }
+    }
+    await tableRef.value?.refreshRemove()
   }
 
   async function handleTransition(
@@ -742,9 +995,36 @@
     }
   }
 
+  async function handleSubmitApproval(row: ScmSalesDocument): Promise<void> {
+    try {
+      await confirmAction(
+        `确定提交${config.value.title}“${row.documentNo}”审批吗？`,
+        `提交${config.value.title}审批`,
+        {
+          type: 'warning',
+          confirmButtonText: '提交审批',
+          cancelButtonText: '取消'
+        }
+      )
+    } catch {
+      return
+    }
+    try {
+      await startWorkflow({
+        businessType: `scm_${props.kind}`,
+        businessId: row.id,
+        businessTitle: `${config.value.title} ${row.documentNo}`
+      })
+      await tableRef.value?.refreshUpdate()
+    } catch (error) {
+      notifyFriendlyError(error, '提交审批失败，请检查单据明细及审批流程配置')
+    }
+  }
+
   function openConversionDialog(row: ScmSalesDocument): void {
     const targets: ScmQuotationConversionTarget[] = []
     if (hasAuth('ScmSalesOrder:Add')) targets.push('sales_order')
+    if (hasAuth('ScmSalesContract:Add')) targets.push('sales_contract')
     if (hasAuth('ScmPurchaseRequest:Add')) targets.push('purchase_request')
     if (hasAuth('ScmPurchaseOrder:Add')) targets.push('purchase_order')
     void conversionDialogRef.value?.handleOpen({ quotation: row, targets })
@@ -753,10 +1033,15 @@
   function handleConverted(result: ScmQuotationConversionResult): void {
     const routes: Record<ScmQuotationConversionTarget, string> = {
       sales_order: '/scm/sales-management/sales-order',
+      sales_contract: '/scm/sales-management/sales-contract',
       purchase_request: '/scm/purchase-management/purchase-request',
       purchase_order: '/scm/purchase-management/purchase-order'
     }
     void router.push(routes[result.targetKind])
+  }
+
+  function handleMaterialGenerated(): void {
+    void tableRef.value?.refreshUpdate()
   }
 
   async function handleGenerateContract(row: ScmSalesDocument): Promise<void> {
@@ -915,13 +1200,16 @@
     const tenantId = importTenantId.value
     if (!tenantId) throw new Error('请先选择所属租户')
     if (!rows.length || rows.length > 2000) throw new Error('每次可导入 1–2000 行明细')
-    const [projectResponse, customerResponse, materialResponse, engineeringResponse] =
+    const [projectResponse, customerResponse, materialResponse, engineeringResponse, typeResponse] =
       await Promise.all([
         fetchScmProjectOptions(tenantId),
         fetchScmCustomerOptions(tenantId),
         fetchScmMaterialOptions(tenantId),
-        fetchScmEngineeringReferenceOptions(tenantId)
+        fetchScmEngineeringReferenceOptions(tenantId),
+        fetchScmDocumentTypeOptions(tenantId, config.value.menuName)
       ])
+    const defaultType = typeResponse.data?.find((item) => item.isDefault)
+    if (!defaultType) throw new Error('请先在 MDM 单据类型中为销售报价单设置默认类型')
     const projects = new Map((projectResponse.data ?? []).map((item) => [item.projectCode, item]))
     const customers = new Map(
       (customerResponse.data ?? []).map((item) => [item.customerCode, item])
@@ -1036,8 +1324,8 @@
       const input = previous ?? {
         tenantId,
         kind: 'sales_quotation',
-        documentNo,
-        documentTypeId: null,
+        documentNo: '',
+        documentTypeId: defaultType.id,
         projectId: project?.id ?? null,
         customerId: customer.id,
         sourceId: null,
@@ -1092,6 +1380,9 @@
       if (input.lines.length > 200) throw new Error(`${prefix}：一份报价单最多 200 行明细`)
       documents.set(documentNo, input)
     })
+    for (const input of documents.values()) {
+      input.details.quotationQuantity = input.lines.reduce((sum, line) => sum + line.quantity, 0)
+    }
     await importScmSalesQuotations([...documents.values()])
   }
 

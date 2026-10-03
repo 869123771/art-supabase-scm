@@ -42,6 +42,7 @@
 </template>
 
 <script setup lang="ts">
+  import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
   import { ElMessage } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
@@ -73,6 +74,7 @@
 
   const targetLabels: Record<ScmQuotationConversionTarget, string> = {
     sales_order: '销售订单',
+    sales_contract: '销售合同',
     purchase_request: '采购申请',
     purchase_order: '采购订单'
   }
@@ -81,6 +83,8 @@
   )
   const targetDescription = computed(() => {
     if (targetKind.value === 'sales_order') return '生成销售订单草稿，继续维护交付与收款计划。'
+    if (targetKind.value === 'sales_contract')
+      return '生成销售合同草稿，继续维护合同条款与收款计划。'
     if (targetKind.value === 'purchase_request')
       return '生成采购申请草稿，仅转换已关联物料编码的报价明细。'
     return '生成采购订单草稿，仅转换已关联物料编码的报价明细，并绑定所选供应商。'
@@ -102,17 +106,21 @@
         targetKind.value,
         supplierId.value || null
       )
-      if (!data) return false
+      if (!data) {
+        ElMessage.error('转单未返回目标单据，请刷新报价后重试')
+        return false
+      }
       emit('success', data)
       return true
-    } catch {
+    } catch (error) {
+      notifyFriendlyError(error, '报价转单失败，请检查报价状态和目标单据权限后重试')
       return false
     }
   }
 
   async function handleOpen(options: OpenOptions): Promise<void> {
     if (!options.targets.length) {
-      ElMessage.warning('请先为当前角色分配销售订单或采购单据的新增权限')
+      ElMessage.warning('请先为当前角色分配目标单据的新增权限')
       return
     }
     quotation.value = options.quotation

@@ -1,1 +1,0 @@
-import{Ai as e,Ji as t,Si as n}from"./sys-CPHpBK2j.js";import{t as r}from"./order-target-workspace-CS00ZSF6.js";var i=e({name:`ScmOutsourceInbound`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`outsource_inbound`}))}});export{i as default};

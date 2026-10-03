@@ -30,8 +30,10 @@ export interface ScmDocumentDetails {
   quotationScene?: 'standard' | 'project'
   title?: string
   paperContractNo?: string
+  contractTotalAmount?: number
   productCategory?: string
   productName?: string
+  quotationQuantity?: number
   materialDescription?: string
   signedDate?: string
   effectiveDate?: string
@@ -101,13 +103,42 @@ export interface ScmEngineeringReferenceOptions {
   codeRules: ScmEngineeringReferenceOption[]
 }
 
-export type ScmQuotationConversionTarget = 'sales_order' | 'purchase_request' | 'purchase_order'
+export type ScmQuotationConversionTarget =
+  'sales_order' | 'sales_contract' | 'purchase_request' | 'purchase_order'
 
 export interface ScmQuotationConversionResult {
   id: string
   documentNo: string
   targetKind: ScmQuotationConversionTarget
   reused: boolean
+}
+
+export interface ScmQuotationMaterialConfig {
+  materialTypeId: string
+  materialSource: string
+  categoryId: string
+  baseUnitId: string
+  codeRuleId: string
+  imageUrls: string[]
+}
+
+export interface ScmQuotationWorkOrderConfig {
+  workOrderTypeId: string
+  constructionNo: string
+  plannedStartDate: string
+  plannedEndDate: string
+}
+
+export interface ScmQuotationWorkOrderResult {
+  lineId: string
+  workOrderId: string
+  workOrderNo: string
+}
+
+export interface ScmGeneratedQuotationMaterial {
+  lineId: string
+  materialId: string
+  materialCode: string
 }
 
 export interface ScmDocumentLine {
@@ -120,6 +151,9 @@ export interface ScmDocumentLine {
   specification?: string
   manufacturer?: string
   brand?: string
+  materialCategory?: string
+  materialType?: string
+  baseUnit?: string
   division?: string
   salesUnit?: string
   stockUnit?: string
@@ -127,6 +161,7 @@ export interface ScmDocumentLine {
   unitPrice: number
   taxRate: number
   costUnitPrice?: number
+  quoteFactor?: number
   gift?: boolean
   discountMode?: string
   discountRate?: number
@@ -140,10 +175,17 @@ export interface ScmDocumentLine {
   warehouse?: string
   location?: string
   needDate?: string
+  deliveryDate?: string
   sourceLineId?: string
   sourceDocumentId?: string
   sourceDocumentNo?: string
   sourceLineNo?: number
+  stockBatchId?: string
+  warehouseId?: string
+  warehouseName?: string
+  zoneName?: string
+  binName?: string
+  batchNo?: string
   deliveredQuantity?: number
   outboundQuantity?: number
   returnQuantity?: number
@@ -159,6 +201,7 @@ export interface ScmDocumentFee {
 
 export interface ScmPaymentPlan {
   id: string
+  paymentTypes?: string[]
   isAdvance: boolean
   dueDate: string
   ratio: number
@@ -196,6 +239,8 @@ export interface ScmSalesDocument {
   status: ScmDocumentStatus
   contractStatus?: ScmSalesContractStatus
   orderStatus?: ScmSalesOrderStatus
+  workflowStatus?: 'running' | 'approved' | 'rejected' | 'withdrawn' | 'cancelled'
+  workflowInstanceId?: string
   receivedAmount?: number
   documentDate: string
   deliveryDate: string | null
@@ -264,6 +309,10 @@ export interface ScmMaterialOption {
   materialCode: string
   materialDescription: string
   specification?: string | null
+  brand?: string | null
+  manufacturer?: string | null
+  materialCategory?: string | null
+  materialType?: string | null
   unit?: string | null
   baseUnitName?: string | null
   baseUnitId?: string | null
@@ -290,4 +339,5 @@ export interface ScmDocumentTypeOption {
   menuId?: string | null
   documentTypeCode: string
   documentTypeName: string
+  isDefault: boolean
 }

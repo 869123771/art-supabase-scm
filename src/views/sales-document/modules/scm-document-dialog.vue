@@ -24,7 +24,7 @@
               :label-key="projectPickerLabel"
               title="参选项目"
               search-placeholder="搜索项目编号或名称"
-              :disabled="!header.tenantId || Boolean(header.sourceId)"
+              :disabled="!header.tenantId || (kind !== 'loading' && Boolean(header.sourceId))"
               empty-text="暂无可选项目"
               empty-description="请先在 MDM 项目列表维护项目。"
               dialog-width="xl"
@@ -59,6 +59,36 @@
               :display-fields="['organization', 'jobTitle', 'employmentStatus']"
               placeholder="从员工花名册参选销售员"
               @change="updateSalesperson"
+            />
+          </template>
+          <template #contractTotalAmount>
+            <div class="flex min-w-0 items-center gap-2">
+              <ElInputNumber
+                :model-value="details.contractTotalAmount ?? contractCalculatedTotal"
+                :min="0"
+                :precision="2"
+                :controls="false"
+                class="min-w-0 flex-1!"
+                aria-label="合同总金额"
+                @update:model-value="
+                  (amount) => (details.contractTotalAmount = amount ?? undefined)
+                "
+              />
+              <ElButton
+                v-if="details.contractTotalAmount !== undefined"
+                text
+                type="primary"
+                @click="details.contractTotalAmount = undefined"
+                >按明细重算</ElButton
+              >
+            </div>
+          </template>
+          <template #quotationScene>
+            <ElSegmented
+              v-model="details.quotationScene"
+              :options="scmQuotationBusinessTypeOptions"
+              :disabled="Boolean(recordId)"
+              aria-label="报价场景"
             />
           </template>
         </ArtForm>
@@ -100,13 +130,15 @@
                 ? '订单明细'
                 : kind === 'shipping_notice'
                   ? '发货明细'
-                  : '物料明细'
+                  : kind === 'sales_quotation'
+                    ? '报价明细'
+                    : '装车明细'
           "
           name="lines"
         >
           <ArtSectionCard
             v-if="kind === 'sales_quotation' && details.quotationScene !== 'project'"
-            title="物料明细"
+            title="报价明细"
             subtitle="标准报价 · 填写未税或含税单价，系统同步计算金额与税额。"
           >
             <QuotationLineTable
@@ -150,6 +182,9 @@
               :contract-documents="contractDocuments"
               :project-id="header.projectId"
               :customer-id="header.customerId"
+              :tenant-id="header.tenantId"
+              :document-id="recordId"
+              :default-delivery-date="header.deliveryDate"
               :materials="materialOptions"
               :disabled="!header.tenantId"
               :source-options="materialSourceOptions"
@@ -163,13 +198,17 @@
               (kind !== 'sales_quotation' && kind !== 'sales_contract' && kind !== 'sales_order') ||
               (kind === 'sales_quotation' && details.quotationScene === 'project')
             "
-            :title="kind === 'shipping_notice' ? '发货明细' : '物料明细'"
+            :title="
+              kind === 'shipping_notice' ? '发货明细' : kind === 'loading' ? '装车明细' : '物料明细'
+            "
             :subtitle="
               kind === 'shipping_notice'
                 ? header.sourceId
                   ? '已关联销售订单；可继续选取该订单的剩余明细。'
                   : '选单或直接添加物料；辅助数量按物料单位换算。'
-                : '按单据维护物料、数量、价格、税率与成本；展开行可填写补充信息。'
+                : kind === 'loading'
+                  ? '按项目与客户选择待发货通知单明细，可在装车前调整数量。'
+                  : '按单据维护物料、数量、价格、税率与成本；展开行可填写补充信息。'
             "
           >
             <QuotationLineTable
@@ -179,8 +218,11 @@
               :engineering="kind === 'sales_quotation' && details.quotationScene === 'project'"
               :operational="kind === 'shipping_notice' || kind === 'loading'"
               :shipping="kind === 'shipping_notice'"
+              :loading="kind === 'loading'"
               :manual-disabled="
-                config.sourceRequired || (kind === 'shipping_notice' && Boolean(header.sourceId))
+                kind === 'loading' ||
+                config.sourceRequired ||
+                (kind === 'shipping_notice' && Boolean(header.sourceId))
               "
               :materials="materialOptions"
               :disabled="!header.tenantId"
@@ -188,6 +230,7 @@
               :tax-rates="taxRateOptions"
               :discount-options="discountOptions"
               @select-order="openShippingOrderPicker"
+              @select-loading="openLoadingPicker"
             />
           </ArtSectionCard>
         </ElTabPane>
@@ -476,8 +519,22 @@
       <div
         class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--el-fill-color-light)] px-4 py-3 text-sm"
       >
-        <span class="text-[var(--art-gray-600)]">预计金额 · 保存时由数据库重新核算</span>
-        <strong class="text-lg font-semibold text-[var(--el-color-primary)]">{{
+        <span class="text-[var(--art-gray-600)]">保存时由数据库重新核算</span>
+        <div v-if="kind === 'sales_quotation'" class="flex flex-wrap gap-x-5 gap-y-1 tabular-nums">
+          <span
+            >总价 <strong>{{ formatCurrencyValue(previewTotal) }}</strong></span
+          >
+          <span
+            >成本总价 <strong>{{ formatCurrencyValue(previewCostTotal) }}</strong></span
+          >
+          <span
+            >毛利 <strong>{{ formatCurrencyValue(previewGrossProfit) }}</strong></span
+          >
+          <span
+            >毛利率 <strong>{{ previewGrossMargin.toFixed(2) }}%</strong></span
+          >
+        </div>
+        <strong v-else class="text-lg font-semibold text-[var(--el-color-primary)]">{{
           formatCurrencyValue(previewTotal)
         }}</strong>
       </div>
@@ -498,7 +555,7 @@
         @change="loadShippingOrderLines"
       >
         <ElOption
-          v-for="order in sourceOptions"
+          v-for="order in shippingOrderOptions"
           :key="order.id"
           :value="order.id"
           :label="order.documentNo"
@@ -522,9 +579,33 @@
       >
     </div>
   </ArtDialog>
+  <ArtDialog ref="loadingPickerRef" size="xl">
+    <div class="flex min-w-0 flex-col gap-3">
+      <p class="text-sm text-[var(--art-gray-600)]">
+        按当前项目和客户显示待发货通知单明细。库存批次可多选，装车数量保存时由系统复核。
+      </p>
+      <ArtTable
+        :data="availableLoadingChoices"
+        :columns="loadingChoiceColumns"
+        :pagination="false"
+        :loading="loadingChoicesLoading"
+        :max-height="420"
+        row-key="key"
+        border
+        scrollbar-always-on
+        empty-text="暂无可装车明细"
+        empty-description="请先选择项目和客户，并确认发货通知单已提交且对应库存可用。"
+        @selection-change="selectedLoadingChoices = $event"
+      />
+      <p class="text-xs text-[var(--art-gray-600)]"
+        >已选 {{ selectedLoadingChoices.length }} 行 · 最多 200 行</p
+      >
+    </div>
+  </ArtDialog>
 </template>
 
 <script setup lang="tsx">
+  import { omit } from 'lodash-es'
   import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import dayjs from 'dayjs'
   import {
@@ -558,8 +639,8 @@
     fetchScmDocumentTypeOptions,
     fetchScmEngineeringReferenceOptions,
     fetchScmMaterialOptions,
+    fetchScmLoadingChoices,
     fetchScmProjectOptions,
-    fetchScmProjectSections,
     fetchScmRemainingSourceLines,
     fetchScmSalespersonOptions,
     fetchScmSourceOptions,
@@ -574,6 +655,7 @@
     type ScmDocumentTypeOption,
     type ScmEngineeringReferenceOptions,
     type ScmMaterialOption,
+    type ScmLoadingChoice,
     type ScmPaymentPlan,
     type ScmProjectOption,
     type ScmQuoteExpense,
@@ -601,7 +683,6 @@
     effectiveTenantId: string | null
     initialSource?: ScmSalesDocument
     sourceLines?: ScmDocumentLine[]
-    openSourcePicker?: boolean
   }
 
   interface HeaderModel {
@@ -634,21 +715,24 @@
   const recordId = ref<string>()
   const tenantOptions = ref<OpenOptions['tenantOptions']>([])
   const projectOptions = ref<ScmProjectOption[]>([])
-  const projectSections = ref<
-    Array<{
-      id: string
-      projectId: string
-      constructionNo: string
-      sectionName: string
-      status: 'active' | 'closed'
-    }>
-  >([])
   const quotationDocuments = ref<ScmSalesDocument[]>([])
   const contractDocuments = ref<ScmSalesDocument[]>([])
   const selectedSalesperson = ref<EmployeeIntegrationItem[]>([])
   const projectPickerColumns: DataSelectColumn[] = [
     { prop: 'projectCode', label: '项目编码', width: 150 },
-    { prop: 'projectName', label: '项目名称', minWidth: 230 }
+    { prop: 'projectName', label: '项目名称', minWidth: 230 },
+    {
+      prop: 'customerGroupName',
+      label: '客户分组',
+      minWidth: 140,
+      formatter: (row) => (row as ScmProjectOption).customer?.customerGroup?.name ?? '—'
+    },
+    {
+      prop: 'customerName',
+      label: '客户',
+      minWidth: 170,
+      formatter: (row) => (row as ScmProjectOption).customer?.customerName ?? '—'
+    }
   ]
   const projectPickerLabel = (row: { projectCode?: string; projectName?: string }): string =>
     `${row.projectName ?? ''} · ${row.projectCode ?? ''}`
@@ -687,16 +771,56 @@
   const details = reactive<ScmDocumentDetails>({})
   const lines = ref<ScmDocumentLine[]>([])
   const selectedShippingOrderId = ref('')
-  const availableShippingLines = ref<ScmDocumentLine[]>([])
-  const selectedShippingLines = ref<ScmDocumentLine[]>([])
+  interface ShippingLineChoice extends ScmDocumentLine {
+    salesQuantity: number
+    availableQuantity: number
+  }
+  const availableShippingLines = ref<ShippingLineChoice[]>([])
+  const selectedShippingLines = ref<ShippingLineChoice[]>([])
   const shippingOrderLoading = ref(false)
   let shippingOrderRevision = 0
-  const shippingOrderColumns: ColumnOption<ScmDocumentLine>[] = [
+  const shippingOrderOptions = computed(() =>
+    sourceOptions.value.filter(
+      (order) =>
+        (!header.projectId || order.projectId === header.projectId) &&
+        (!header.customerId || order.customerId === header.customerId)
+    )
+  )
+  const shippingOrderColumns: ColumnOption<ShippingLineChoice>[] = [
     { type: 'selection', width: 48 },
+    { prop: 'lineNo', label: '行号', width: 78 },
     { prop: 'materialCode', label: '物料编码', minWidth: 150 },
     { prop: 'materialDescription', label: '物料描述', minWidth: 220, showOverflowTooltip: true },
-    { prop: 'quantity', label: '待发数量', width: 110, align: 'right' },
-    { prop: 'salesUnit', label: '单位', width: 90 }
+    { prop: 'salesQuantity', label: '销单数量', width: 110, align: 'right' },
+    { prop: 'availableQuantity', label: '可发货数量', width: 120, align: 'right' },
+    { prop: 'baseUnit', label: '基本单位', width: 100 }
+  ]
+  const loadingPickerRef = ref<ArtDialogExpose>()
+  const loadingChoicesLoading = ref(false)
+  const availableLoadingChoices = ref<ScmLoadingChoice[]>([])
+  const selectedLoadingChoices = ref<ScmLoadingChoice[]>([])
+  const loadingChoiceColumns: ColumnOption<ScmLoadingChoice>[] = [
+    { type: 'selection', width: 48 },
+    { prop: 'noticeNo', label: '发货通知单号', minWidth: 170 },
+    { prop: 'noticeLineNo', label: '行号', width: 75 },
+    { prop: 'line.materialCode', label: '物料编码', minWidth: 145 },
+    {
+      prop: 'line.materialDescription',
+      label: '物料描述',
+      minWidth: 200,
+      showOverflowTooltip: true
+    },
+    { prop: 'line.baseUnit', label: '基本单位', width: 95 },
+    { prop: 'noticeQuantity', label: '通知单数量', width: 110, align: 'right' },
+    { prop: 'availableQuantity', label: '可装车数量', width: 110, align: 'right' },
+    { prop: 'loadedQuantity', label: '已装车数量', width: 110, align: 'right' },
+    { prop: 'availableStock', label: '可用库存', width: 100, align: 'right' },
+    { prop: 'warehouseName', label: '仓库', minWidth: 130 },
+    { prop: 'zoneName', label: '库区', minWidth: 110 },
+    { prop: 'binName', label: '库位', minWidth: 110 },
+    { prop: 'batchNo', label: '批次', minWidth: 110 },
+    { prop: 'line.sourceDocumentNo', label: '销售订单号', minWidth: 150 },
+    { prop: 'line.sourceLineNo', label: '销单行号', width: 90 }
   ]
   const fees = ref<ScmDocumentFee[]>([])
   const paymentPlans = ref<ScmPaymentPlan[]>([])
@@ -749,7 +873,7 @@
     ).tax
   }
 
-  const previewTotal = computed(() => {
+  const contractCalculatedTotal = computed(() => {
     const subtotal = lines.value.reduce((sum, line) => sum + lineAmount(line), 0)
     const feeTotal = fees.value.reduce((sum, fee) => sum + Number(fee.amount || 0), 0)
     const projectExtras =
@@ -757,14 +881,33 @@
       (kind.value === 'sales_quotation' && details.quotationScene === 'project')
         ? Number(details.packageFee || 0) + Number(details.transportFee || 0)
         : 0
-    const taxTotal = lines.value.reduce((sum, line) => sum + lineTax(line), 0)
+    const taxTotal =
+      kind.value === 'sales_contract' || kind.value === 'sales_order'
+        ? lines.value.reduce((sum, line) => sum + lineTax(line), 0)
+        : 0
     return subtotal + taxTotal + feeTotal + projectExtras
   })
+  const previewTotal = computed(() =>
+    kind.value === 'sales_contract' && details.contractTotalAmount !== undefined
+      ? details.contractTotalAmount
+      : contractCalculatedTotal.value
+  )
+  const previewCostTotal = computed(
+    () =>
+      lines.value.reduce((sum, line) => sum + line.quantity * Number(line.costUnitPrice || 0), 0) +
+      fees.value.reduce((sum, fee) => sum + Number(fee.cost || 0), 0)
+  )
+  const previewGrossProfit = computed(() => previewTotal.value - previewCostTotal.value)
+  const previewGrossMargin = computed(() =>
+    previewTotal.value ? (previewGrossProfit.value / previewTotal.value) * 100 : 0
+  )
 
   const headerRules = computed<FormRules<HeaderModel>>(() => ({
     tenantId: [{ required: true, message: '请选择所属租户', trigger: 'change' }],
     documentNo:
-      ['sales_contract', 'sales_order', 'shipping_notice'].includes(kind.value) && !recordId.value
+      ['sales_quotation', 'sales_contract', 'sales_order', 'shipping_notice', 'loading'].includes(
+        kind.value
+      ) && !recordId.value
         ? []
         : [
             { required: true, message: '请输入单据编号', trigger: 'blur' },
@@ -788,6 +931,9 @@
       }
     ],
     customerId: [{ required: true, message: '请选择客户', trigger: 'change' }],
+    ...(['sales_quotation', 'sales_order', 'shipping_notice', 'loading'].includes(kind.value)
+      ? { documentTypeId: [{ required: true, message: '请选择单据类型', trigger: 'change' }] }
+      : {}),
     documentDate: [{ required: true, message: '请选择单据日期', trigger: 'change' }]
   }))
 
@@ -796,6 +942,15 @@
     for (const field of activeDetailFields.value) {
       if (field.required)
         rules[field.key] = [{ required: true, message: `请填写${field.label}`, trigger: 'blur' }]
+    }
+    if (kind.value === 'sales_quotation') {
+      rules.quotationQuantity = [
+        {
+          validator: (_rule, value, callback) =>
+            Number(value) > 0 ? callback() : callback(new Error('数量必须大于 0')),
+          trigger: 'change'
+        }
+      ]
     }
     return rules
   })
@@ -831,8 +986,20 @@
       type: 'input',
       props: {
         maxlength: 60,
-        disabled: ['sales_contract', 'sales_order', 'shipping_notice'].includes(kind.value),
-        placeholder: ['sales_contract', 'sales_order', 'shipping_notice'].includes(kind.value)
+        disabled: [
+          'sales_quotation',
+          'sales_contract',
+          'sales_order',
+          'shipping_notice',
+          'loading'
+        ].includes(kind.value),
+        placeholder: [
+          'sales_quotation',
+          'sales_contract',
+          'sales_order',
+          'shipping_notice',
+          'loading'
+        ].includes(kind.value)
           ? '保存后按月度编号规则自动生成'
           : undefined
       }
@@ -859,7 +1026,13 @@
     {
       label: '项目名称',
       key: 'projectId',
-      type: ['sales_contract', 'sales_order', 'shipping_notice'].includes(kind.value)
+      type: [
+        'sales_quotation',
+        'sales_contract',
+        'sales_order',
+        'shipping_notice',
+        'loading'
+      ].includes(kind.value)
         ? 'slot'
         : 'select',
       props: {
@@ -889,7 +1062,10 @@
         placeholder: '优先从项目带入，可手动选择'
       }
     },
-    ...(config.value.sourceKind && kind.value !== 'sales_order' && kind.value !== 'shipping_notice'
+    ...(config.value.sourceKind &&
+    kind.value !== 'sales_order' &&
+    kind.value !== 'shipping_notice' &&
+    kind.value !== 'loading'
       ? [
           {
             label: config.value.sourceLabel || '来源单据',
@@ -967,7 +1143,7 @@
           {
             label: '报价场景',
             key: 'quotationScene',
-            type: 'select',
+            type: 'slot',
             span: 24,
             props: {
               options: scmQuotationBusinessTypeOptions,
@@ -983,18 +1159,15 @@
       type: field.type,
       span: field.span ?? 12,
       props:
-        field.key === 'constructionNo' && kind.value === 'shipping_notice'
+        field.key === 'productName' && kind.value === 'sales_quotation'
           ? {
-              options: projectSections.value
-                .filter((item) => item.projectId === header.projectId && item.status === 'active')
-                .map((item) => ({
-                  label: `${item.constructionNo} · ${item.sectionName}`,
-                  value: item.constructionNo
-                })),
+              options: materialOptions.value.map((item) => ({
+                label: item.materialDescription,
+                value: item.materialDescription
+              })),
               filterable: true,
-              clearable: !header.projectId,
-              disabled: !header.projectId,
-              placeholder: header.projectId ? '选择项目施工号' : '非项目业务无需施工号'
+              clearable: true,
+              placeholder: '从物料描述中选填产品名称'
             }
           : field.type === 'date'
             ? {
@@ -1078,7 +1251,6 @@
   async function loadReferences(tenantId: string): Promise<void> {
     const revision = ++referenceRevision
     projectOptions.value = []
-    projectSections.value = []
     customerOptions.value = []
     materialOptions.value = []
     expenseOptions.value = []
@@ -1104,8 +1276,7 @@
         sources,
         engineering,
         quotations,
-        contracts,
-        sections
+        contracts
       ] = await Promise.all([
         fetchScmProjectOptions(tenantId),
         fetchScmCustomerOptions(tenantId),
@@ -1123,16 +1294,17 @@
           : Promise.resolve(null),
         kind.value === 'sales_order'
           ? fetchScmSourceOptions('sales_contract', tenantId)
-          : Promise.resolve(null),
-        kind.value === 'shipping_notice' ? fetchScmProjectSections(tenantId) : Promise.resolve([])
+          : Promise.resolve(null)
       ])
       if (revision !== referenceRevision) return
       projectOptions.value = projects.data ?? []
-      projectSections.value = sections
       customerOptions.value = customers.data ?? []
       materialOptions.value = materials.data ?? []
       expenseOptions.value = expenses.data ?? []
       documentTypeOptions.value = types.data ?? []
+      if (!recordId.value && !header.documentTypeId) {
+        header.documentTypeId = documentTypeOptions.value.find((item) => item.isDefault)?.id ?? ''
+      }
       quotationDocuments.value = (quotations?.data ?? []).filter(
         (item) => item.status === 'effective'
       )
@@ -1272,6 +1444,7 @@
   function addPaymentPlan(): void {
     paymentPlans.value.push({
       id: crypto.randomUUID(),
+      paymentTypes: [],
       isAdvance: false,
       dueDate: '',
       ratio: 0,
@@ -1294,6 +1467,27 @@
       width: 100,
       align: 'center',
       formatter: (row) => <ElCheckbox v-model={row.isAdvance} aria-label="是否预收" />
+    },
+    {
+      prop: 'paymentTypes',
+      label: '收/付款类型',
+      minWidth: 215,
+      formatter: (row) => (
+        <ElSelect
+          v-model={row.paymentTypes}
+          multiple
+          collapseTags
+          collapseTagsTooltip
+          clearable
+          placeholder="选择收/付款类型"
+          class="w-full!"
+          aria-label="收付款类型"
+        >
+          {(userStore.getDictMap?.scmPaymentType ?? []).map((option) => (
+            <ElOption key={option.value} label={option.label} value={option.value} />
+          ))}
+        </ElSelect>
+      )
     },
     {
       prop: 'dueDate',
@@ -1511,15 +1705,26 @@
     const revision = ++shippingOrderRevision
     selectedShippingLines.value = []
     availableShippingLines.value = []
-    const source = sourceOptions.value.find((item) => item.id === orderId)
+    const source = shippingOrderOptions.value.find((item) => item.id === orderId)
     if (!source) return
     shippingOrderLoading.value = true
     try {
       const remaining = await fetchScmRemainingSourceLines(source)
       if (revision !== shippingOrderRevision) return
-      availableShippingLines.value = remaining.filter(
-        (line) => !lines.value.some((existing) => existing.sourceLineId === line.lineId)
-      )
+      availableShippingLines.value = remaining
+        .filter((line) => !lines.value.some((existing) => existing.sourceLineId === line.lineId))
+        .map((line) => {
+          const sourceLine = source.lines.find((item) => item.lineId === line.lineId)
+          return {
+            ...line,
+            lineNo:
+              sourceLine?.lineNo ??
+              source.lines.findIndex((item) => item.lineId === line.lineId) + 1,
+            salesQuantity: sourceLine?.quantity ?? line.quantity,
+            availableQuantity: line.quantity,
+            baseUnit: line.baseUnit || sourceLine?.baseUnit || ''
+          }
+        })
     } catch {
       if (revision === shippingOrderRevision)
         ElMessage.warning('订单剩余数量加载失败，请重新选择订单')
@@ -1533,8 +1738,8 @@
       ElMessage.warning('当前为直接添加物料的发货单；请清空明细后再选单')
       return
     }
-    if (!sourceOptions.value.length) {
-      ElMessage.warning('暂无可选的已审核或履约中销售订单')
+    if (!shippingOrderOptions.value.length) {
+      ElMessage.warning('当前项目和客户暂无可发货的销售订单')
       return
     }
     selectedShippingOrderId.value = header.sourceId || ''
@@ -1555,7 +1760,9 @@
         }
       },
       onConfirm: () => {
-        const source = sourceOptions.value.find((item) => item.id === selectedShippingOrderId.value)
+        const source = shippingOrderOptions.value.find(
+          (item) => item.id === selectedShippingOrderId.value
+        )
         if (!source || !selectedShippingLines.value.length) {
           ElMessage.warning('请选择销售订单及至少一行待发明细')
           return false
@@ -1575,17 +1782,103 @@
         lines.value = [
           ...lines.value,
           ...selectedShippingLines.value.map((line) => ({
-            ...line,
+            ...omit(line, ['salesQuantity', 'availableQuantity']),
             lineId: crypto.randomUUID(),
             sourceLineId: line.lineId,
             sourceDocumentId: source.id,
             sourceDocumentNo: source.documentNo,
-            sourceLineNo: source.lines.findIndex((item) => item.lineId === line.lineId) + 1,
+            sourceLineNo: line.lineNo,
             deliveredQuantity: 0,
             outboundQuantity: 0,
             returnQuantity: 0
           }))
         ]
+        return true
+      }
+    })
+  }
+
+  async function openLoadingPicker(): Promise<void> {
+    if (!header.tenantId || !header.projectId || !header.customerId) {
+      ElMessage.warning('请先选择所属租户、项目和客户')
+      return
+    }
+    selectedLoadingChoices.value = []
+    availableLoadingChoices.value = []
+    await loadingPickerRef.value?.handleOpen(undefined, {
+      title: '选单 · 待发货通知单明细',
+      confirmText: '添加装车明细',
+      loading: true,
+      loadingText: '正在核对可装车数量与库存…',
+      onOpen: async (_data, api) => {
+        loadingChoicesLoading.value = true
+        try {
+          const choices = await fetchScmLoadingChoices(
+            header.tenantId,
+            header.projectId,
+            header.customerId,
+            recordId.value || undefined
+          )
+          availableLoadingChoices.value = choices.filter(
+            (choice) =>
+              choice.availableStock > 0 &&
+              !lines.value.some(
+                (line) =>
+                  line.sourceDocumentId === choice.noticeId &&
+                  line.sourceLineId === choice.noticeLineId &&
+                  line.stockBatchId === choice.stockBatchId
+              )
+          )
+        } catch {
+          ElMessage.warning('可装车明细加载失败，请稍后重试')
+        } finally {
+          loadingChoicesLoading.value = false
+          api.setLoading(false)
+        }
+      },
+      onConfirm: () => {
+        if (!selectedLoadingChoices.value.length) {
+          ElMessage.warning('请选择至少一行可装车明细')
+          return false
+        }
+        if (lines.value.length + selectedLoadingChoices.value.length > 200) {
+          ElMessage.warning('装车明细最多 200 行')
+          return false
+        }
+        const remaining = new Map<string, number>()
+        const added: ScmDocumentLine[] = []
+        for (const choice of selectedLoadingChoices.value) {
+          const sourceKey = `${choice.noticeId}:${choice.noticeLineId}`
+          const available = remaining.get(sourceKey) ?? choice.availableQuantity
+          const quantity = Math.min(available, choice.availableStock)
+          if (quantity <= 0) continue
+          remaining.set(sourceKey, available - quantity)
+          added.push({
+            ...choice.line,
+            lineId: crypto.randomUUID(),
+            lineNo:
+              Math.max(0, ...lines.value.map((line) => line.lineNo ?? 0)) + (added.length + 1) * 10,
+            quantity,
+            sourceLineId: choice.noticeLineId,
+            sourceDocumentId: choice.noticeId,
+            sourceDocumentNo: choice.noticeNo,
+            sourceLineNo: choice.noticeLineNo,
+            stockBatchId: choice.stockBatchId,
+            warehouseId: choice.warehouseId,
+            warehouseName: choice.warehouseName,
+            zoneName: choice.zoneName,
+            binName: choice.binName,
+            batchNo: choice.batchNo,
+            deliveredQuantity: 0,
+            outboundQuantity: 0,
+            returnQuantity: 0
+          })
+        }
+        if (!added.length) {
+          ElMessage.warning('所选明细没有剩余可装车数量')
+          return false
+        }
+        lines.value = [...lines.value, ...added]
         return true
       }
     })
@@ -1617,7 +1910,6 @@
     header.projectId = source.projectId || ''
     header.customerId = source.customerId || ''
     header.currency = source.currency || 'CNY'
-    if (kind.value === 'shipping_notice') details.constructionNo = source.details.constructionNo
     if (kind.value === 'project_quotation') {
       Object.assign(details, source.details)
       header.documentDate = source.documentDate
@@ -1636,12 +1928,16 @@
   }
 
   function validateDetails(): boolean {
-    if (kind.value === 'shipping_notice' && header.projectId && !details.constructionNo) {
-      ElMessage.warning('项目发货通知单必须选择施工号')
-      return false
-    }
     if (config.value.sourceRequired && !header.sourceId) {
       ElMessage.warning(`请选择${config.value.sourceLabel || '来源单据'}`)
+      return false
+    }
+    if (
+      kind.value === 'loading' &&
+      lines.value.some((line) => !line.sourceDocumentId || !line.sourceLineId || !line.materialId)
+    ) {
+      ElMessage.warning('装车明细必须从发货通知单选取')
+      activeTab.value = 'lines'
       return false
     }
     if (!lines.value.length) {
@@ -1778,7 +2074,7 @@
       }
       if (!validateDetails()) return false
       const cleanDetails: ScmDocumentDetails = { ...details }
-      if (kind.value === 'shipping_notice' && !header.projectId) delete cleanDetails.constructionNo
+      if (kind.value === 'shipping_notice') delete cleanDetails.constructionNo
       const payload: ScmSalesDocumentWrite = {
         tenantId: header.tenantId,
         kind: kind.value,
@@ -1786,7 +2082,7 @@
         documentTypeId: header.documentTypeId || null,
         projectId: header.projectId || null,
         customerId: header.customerId || null,
-        sourceId: header.sourceId || null,
+        sourceId: kind.value === 'loading' ? null : header.sourceId || null,
         documentDate: header.documentDate,
         deliveryDate: header.deliveryDate || null,
         currency: header.currency || 'CNY',
@@ -1859,6 +2155,8 @@
       : []
     if (kind.value === 'sales_quotation' && !details.quotationScene)
       details.quotationScene = 'standard'
+    if (kind.value === 'sales_quotation' && !details.quotationQuantity)
+      details.quotationQuantity = 1
     if (options.copy) delete details.automationResult
     if (config.value.usePaymentPlans && !details.paymentPlanMode) details.paymentPlanMode = 'amount'
     lines.value =
@@ -1879,17 +2177,19 @@
       lines.value = []
     if (options.initialSource) {
       header.tenantId = options.initialSource.tenantId
-      header.sourceId = options.initialSource.id
       header.projectId = options.initialSource.projectId ?? ''
       header.customerId = options.initialSource.customerId ?? ''
       header.currency = options.initialSource.currency
-      lines.value = (options.sourceLines ?? options.initialSource.lines).map((line) => ({
-        ...line,
-        lineId: crypto.randomUUID(),
-        sourceLineId: line.lineId,
-        sourceDocumentId: options.initialSource?.id,
-        sourceDocumentNo: options.initialSource?.documentNo
-      }))
+      if (kind.value !== 'loading') {
+        header.sourceId = options.initialSource.id
+        lines.value = (options.sourceLines ?? options.initialSource.lines).map((line) => ({
+          ...line,
+          lineId: crypto.randomUUID(),
+          sourceLineId: line.lineId,
+          sourceDocumentId: options.initialSource?.id,
+          sourceDocumentNo: options.initialSource?.documentNo
+        }))
+      }
     }
     fees.value = options.record?.fees.map((fee) => ({ ...fee })) ?? []
     paymentPlans.value =
@@ -1928,6 +2228,7 @@
             [
               'scmDiscountMode',
               'scmPaymentPlanMode',
+              'scmPaymentType',
               'scmTransportMode',
               'mdmCurrency',
               'scmTaxRate',
@@ -1935,10 +2236,6 @@
             ].map((code) => userStore.ensureDictLoaded(code))
           )
           await loadReferences(header.tenantId)
-          if (options.openSourcePicker && kind.value === 'sales_order') {
-            await nextTick()
-            await quotationLineTableRef.value?.openSourcePicker('sales_contract')
-          }
         } catch {
           ElMessage.warning('单据选项加载失败，请关闭弹窗后重试')
         } finally {
@@ -1971,13 +2268,13 @@
       const project = projectOptions.value.find((item) => item.id === projectId)
       if (project?.customerId) header.customerId = project.customerId
       if (projectId) details.plannedProjectName = project?.projectName ?? details.plannedProjectName
-      if (kind.value === 'shipping_notice') details.constructionNo = undefined
     }
   )
   watch(
     () => header.sourceId,
     (sourceId) => {
-      if (!preparing && sourceId && kind.value !== 'shipping_notice') void applySource(sourceId)
+      if (!preparing && sourceId && kind.value !== 'shipping_notice' && kind.value !== 'loading')
+        void applySource(sourceId)
     }
   )
   watch(

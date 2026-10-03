@@ -12,6 +12,7 @@ export interface ScmQuoteCategory {
   tenantId: string
   projectId: string
   categoryName: string
+  quotationNo: string | null
   quantity: number
   unitPrice: number
   feeItems: QuoteCategoryFee[]
@@ -47,6 +48,7 @@ export interface ScmProjectOption {
   projectCode: string
   projectName: string
   customerId: string | null
+  customer?: { customerName: string; customerGroup?: { name: string } | null } | null
 }
 
 const { supabase, responseHandle, keysToSnakeDeep } = useSupabase()
@@ -65,7 +67,7 @@ export async function fetchQuoteCategories(query: QuoteCategoryQuery = {}) {
     .range(from, to)
   if (keyword?.trim()) {
     const { data: projects } = await fetchScmProjectOptions(tenantId, keyword.trim())
-    const categorySearch = buildOrIlikeFilter(['category_name'], keyword.trim())
+    const categorySearch = buildOrIlikeFilter(['category_name', 'quotation_no'], keyword.trim())
     const projectSearch = projects?.length
       ? `,project_id.in.(${projects.map((project) => project.id).join(',')})`
       : ''
@@ -79,7 +81,9 @@ export async function fetchQuoteCategories(query: QuoteCategoryQuery = {}) {
 export async function fetchScmProjectOptions(tenantId?: string, keyword?: string) {
   let request = supabase
     .from('mdm_project')
-    .select('id,tenant_id,project_code,project_name,customer_id')
+    .select(
+      'id,tenant_id,project_code,project_name,customer_id,customer:mdm_customer!mdm_project_customer_tenant_fk(customer_name,customerGroup:mdm_master_group!mdm_customer_group_tenant_fk(name))'
+    )
     .eq('enabled', true)
     .order('project_name')
     .range(0, 999)

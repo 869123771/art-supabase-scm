@@ -35,6 +35,7 @@
         "
         :empty="!record.lines.length"
         empty-title="暂无明细"
+        empty-description="单据录入明细后可在此核对物料与数量。"
       >
         <div class="divide-y divide-[var(--el-border-color-lighter)]">
           <div

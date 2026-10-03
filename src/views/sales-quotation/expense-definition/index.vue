@@ -57,7 +57,8 @@
   import BusinessTableWorkspaceActions from '@/components/business/business-table-workspace-actions/index.vue'
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
   import { useArtFeedback } from '@/hooks/core/useArtFeedback'
-  import { useTenantScopeStore } from '@/store/modules/tenantScope'
+  import { useTenantScopeStore } from '@/store/modules/tenant-scope'
+  import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
   import { useUserStore } from '@/store/modules/user'
   import type { ColumnOption } from '@/types'
   import {
@@ -82,6 +83,7 @@
   const { isPlatformSuper } = storeToRefs(useUserStore())
   const tenantScopeStore = useTenantScopeStore()
   const { effectiveTenantId, tenantOptions: availableTenants } = storeToRefs(tenantScopeStore)
+  const { defaultWriteTenantId } = useTenantScopeFormPolicy()
   const tableRef = ref<ArtTableQueryExpose>()
   const dialogRef = ref<{
     handleOpen: (options: {
@@ -98,7 +100,9 @@
       value: tenant.id
     }))
   )
-  const importTenantId = computed(() => effectiveTenantId.value || search.value.tenantId || '')
+  const importTenantId = computed(
+    () => effectiveTenantId.value || search.value.tenantId || defaultWriteTenantId.value || ''
+  )
 
   const expenseExcelColumns = [
     { key: 'expenseCode', title: '报价费用编码', required: true },
