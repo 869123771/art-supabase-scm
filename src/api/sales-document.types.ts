@@ -337,6 +337,7 @@ export interface ScmDocumentTypeOption {
   id: string
   tenantId: string
   menuId?: string | null
+  menuIds: string[]
   documentTypeCode: string
   documentTypeName: string
   isDefault: boolean

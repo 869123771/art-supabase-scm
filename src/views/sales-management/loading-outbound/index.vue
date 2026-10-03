@@ -23,13 +23,25 @@
         :columns-factory="columnsFactory"
         :search-bar-props="{ span: 6, labelWidth: 82, showExpand: true }"
         :table-props="{
-          rowKey: 'id',
+          rowKey: displayMode === 'document' ? 'loadingId' : 'id',
+          spanMethod: mergeDocumentCells,
           tableLayout: 'fixed',
           emptyText: '暂无符合条件的装车明细',
           emptyDescription: '请调整状态或查询条件，或先确认装车单。'
         }"
         focusable
-      />
+      >
+        <template #search-displayMode>
+          <ElRadioGroup
+            v-model="displayMode"
+            aria-label="单据列表展示方式"
+            @change="tableRef?.refreshContext()"
+          >
+            <ElRadioButton label="document" value="document">按单据</ElRadioButton>
+            <ElRadioButton label="line" value="line">按明细</ElRadioButton>
+          </ElRadioGroup>
+        </template>
+      </ArtTableQuery>
 
       <ArtDialog ref="outboundDialogRef" size="xl">
         <div class="flex min-w-0 flex-col gap-3">
@@ -93,6 +105,7 @@
   import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
   import { useTenantScopeStore } from '@/store/modules/tenant-scope'
   import type { ColumnOption } from '@/types'
+  import { documentGroupSpan, groupDocumentLines } from '@/utils/business/document-detail-list'
   import {
     fetchScmLoadingOutboundRows,
     fetchScmOutboundStocks,
@@ -114,6 +127,43 @@
   const tenantScopeStore = useTenantScopeStore()
   const { effectiveTenantId } = storeToRefs(tenantScopeStore)
   const tableRef = ref<ArtTableQueryExpose>()
+  type LoadingListRow = ScmLoadingOutboundRow & { detailCount?: number }
+  const displayMode = ref<'document' | 'line'>('document')
+  const visibleRows = ref<LoadingListRow[]>([])
+  const lineProperties = new Set([
+    'materialCode',
+    'materialDescription',
+    'specification',
+    'baseUnit',
+    'loadedQuantity',
+    'deliveredQuantity',
+    'warehouseName',
+    'zoneName',
+    'binName',
+    'batchNo',
+    'serialNos',
+    'sourceDocumentNo',
+    'sourceLineNo',
+    'outboundStatus',
+    'operation'
+  ])
+  function mergeDocumentCells({
+    rowIndex,
+    column
+  }: {
+    rowIndex: number
+    column: { property?: string }
+  }) {
+    return displayMode.value === 'line'
+      ? documentGroupSpan(
+          visibleRows.value,
+          rowIndex,
+          column.property,
+          lineProperties,
+          (row) => row.loadingId
+        )
+      : ([1, 1] as [number, number])
+  }
   const query = ref({
     status: 'pending' as 'pending' | 'partial' | 'complete' | 'all',
     loadingNo: '',
@@ -123,6 +173,7 @@
   })
   const targetLoadingId = computed(() => String(route.query.loadingId ?? ''))
   const searchItems: SearchFormItem[] = [
+    { label: '展示方式', key: 'displayMode', type: 'text' },
     {
       label: '出库状态',
       key: 'status',
@@ -155,50 +206,80 @@
     const rows = await fetchScmLoadingOutboundRows(effectiveTenantId.value || undefined)
     const contains = (value: string, term?: string) =>
       value.toLocaleLowerCase().includes((term ?? '').trim().toLocaleLowerCase())
-    const filtered = rows.filter((row) => {
+    const baseRows = rows.filter((row) => {
       if (targetLoadingId.value && row.loadingId !== targetLoadingId.value) return false
       if (params.status !== 'all' && row.outboundStatus !== (params.status ?? 'pending'))
         return false
       return (
         contains(row.loadingNo, params.loadingNo) &&
-        contains(row.materialDescription, params.materialDescription) &&
         contains(row.projectName, params.projectName) &&
         contains(row.customerName, params.customerName)
       )
     })
+    const filtered = baseRows.filter((row) =>
+      contains(row.materialDescription, params.materialDescription)
+    )
+    const matchingLoadingIds = new Set(filtered.map((row) => row.loadingId))
+    const displayRows =
+      displayMode.value === 'line'
+        ? filtered
+        : groupDocumentLines(
+            baseRows.filter((row) => matchingLoadingIds.has(row.loadingId)),
+            (row) => row.loadingId
+          ).map(({ first, lines }) => ({
+            ...first,
+            materialDescription: `共 ${lines.length} 项物料`,
+            detailCount: lines.length,
+            outboundStatus: lines.every((line) => line.outboundStatus === 'complete')
+              ? ('complete' as const)
+              : lines.some((line) => line.outboundStatus !== 'pending')
+                ? ('partial' as const)
+                : ('pending' as const)
+          }))
     const current = Math.max(1, Number(params.current) || 1)
     const size = Math.max(1, Number(params.size) || 20)
+    const pageRows = displayRows.slice((current - 1) * size, current * size)
+    visibleRows.value = displayMode.value === 'line' ? pageRows : []
     return {
-      records: filtered.slice((current - 1) * size, current * size),
-      total: filtered.length,
+      records: pageRows,
+      total: displayRows.length,
       current,
       size
     }
   }
 
-  const columnsFactory = (): ColumnOption<ScmLoadingOutboundRow>[] => [
+  const columnsFactory = (): ColumnOption<LoadingListRow>[] => [
     { prop: 'loadingNo', label: '装车单号', minWidth: 170, fixed: 'left' },
     { prop: 'projectName', label: '项目名称', minWidth: 180, showOverflowTooltip: true },
     { prop: 'customerName', label: '客户全称', minWidth: 180, showOverflowTooltip: true },
     { prop: 'contractNo', label: '合同号', minWidth: 160 },
-    { prop: 'materialCode', label: '物料编码', minWidth: 150 },
+    ...(displayMode.value === 'line'
+      ? [{ prop: 'materialCode', label: '物料编码', minWidth: 150 }]
+      : []),
     { prop: 'materialDescription', label: '物料描述', minWidth: 210, showOverflowTooltip: true },
-    { prop: 'specification', label: '规格型号', minWidth: 140 },
-    { prop: 'baseUnit', label: '基本单位', width: 100 },
-    { prop: 'loadedQuantity', label: '装车数量', width: 110, align: 'right' },
-    { prop: 'deliveredQuantity', label: '已交货数量', width: 120, align: 'right' },
-    { prop: 'warehouseName', label: '仓库', minWidth: 130 },
-    { prop: 'zoneName', label: '库区', minWidth: 110 },
-    { prop: 'binName', label: '库位', minWidth: 110 },
-    { prop: 'batchNo', label: '批次', minWidth: 120 },
-    { prop: 'serialNos', label: '序列号', minWidth: 150, showOverflowTooltip: true },
-    { prop: 'sourceDocumentNo', label: '来源单据', minWidth: 170 },
-    { prop: 'sourceLineNo', label: '源行号', width: 95 },
+    ...(displayMode.value === 'document'
+      ? [{ prop: 'detailCount', label: '明细', width: 85 }]
+      : []),
+    ...(displayMode.value === 'line'
+      ? [
+          { prop: 'specification', label: '规格型号', minWidth: 140 },
+          { prop: 'baseUnit', label: '基本单位', width: 100 },
+          { prop: 'loadedQuantity', label: '装车数量', width: 110, align: 'right' },
+          { prop: 'deliveredQuantity', label: '已交货数量', width: 120, align: 'right' },
+          { prop: 'warehouseName', label: '仓库', minWidth: 130 },
+          { prop: 'zoneName', label: '库区', minWidth: 110 },
+          { prop: 'binName', label: '库位', minWidth: 110 },
+          { prop: 'batchNo', label: '批次', minWidth: 120 },
+          { prop: 'serialNos', label: '序列号', minWidth: 150, showOverflowTooltip: true },
+          { prop: 'sourceDocumentNo', label: '来源单据', minWidth: 170 },
+          { prop: 'sourceLineNo', label: '源行号', width: 95 }
+        ]
+      : []),
     {
       prop: 'outboundStatus',
       label: '出库状态',
       width: 110,
-      formatter: (row) => (
+      formatter: (row: LoadingListRow) => (
         <ElTag
           type={
             row.outboundStatus === 'complete'
@@ -212,28 +293,32 @@
         </ElTag>
       )
     },
-    {
-      prop: 'operation',
-      label: '操作',
-      width: 110,
-      fixed: 'right',
-      formatter: (row) => (
-        <ArtButtonTable
-          permission="ScmLoadingOutbound:Issue"
-          label="出库"
-          icon="ri:logout-box-r-line"
-          showLabel
-          disabled={
-            row.outboundStatus === 'complete' ||
-            !row.materialId ||
-            !row.projectId ||
-            !hasAuth('ScmLoadingOutbound:Issue') ||
-            !hasAuth('WmsStockOperation:Issue')
+    ...(displayMode.value === 'line'
+      ? [
+          {
+            prop: 'operation',
+            label: '操作',
+            width: 110,
+            fixed: 'right' as const,
+            formatter: (row: LoadingListRow) => (
+              <ArtButtonTable
+                permission="ScmLoadingOutbound:Issue"
+                label="出库"
+                icon="ri:logout-box-r-line"
+                showLabel
+                disabled={
+                  row.outboundStatus === 'complete' ||
+                  !row.materialId ||
+                  !row.projectId ||
+                  !hasAuth('ScmLoadingOutbound:Issue') ||
+                  !hasAuth('WmsStockOperation:Issue')
+                }
+                onClick={() => void openOutbound(row)}
+              />
+            )
           }
-          onClick={() => void openOutbound(row)}
-        />
-      )
-    }
+        ]
+      : [])
   ]
 
   const stockColumns: ColumnOption<StockChoice>[] = [

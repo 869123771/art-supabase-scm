@@ -28,13 +28,25 @@
         header-actions-placement="workspace"
         :search-bar-props="{ span: 6, labelWidth: 82, showExpand: true }"
         :table-props="{
-          rowKey: 'id',
+          rowKey: displayMode === 'line' ? 'detailRowId' : 'id',
+          spanMethod: mergeDocumentCells,
           tableLayout: 'fixed',
           emptyText: `暂无${config.title}`,
           emptyDescription: `创建${config.title}后，可继续维护明细与单据状态。`
         }"
         focusable
-      />
+      >
+        <template #search-displayMode>
+          <ElRadioGroup
+            v-model="displayMode"
+            aria-label="单据列表展示方式"
+            @change="onDisplayModeChange"
+          >
+            <ElRadioButton label="document" value="document">按单据</ElRadioButton>
+            <ElRadioButton label="line" value="line">按明细</ElRadioButton>
+          </ElRadioGroup>
+        </template>
+      </ArtTableQuery>
 
       <ScmDocumentDialog ref="dialogRef" @success="handleSaved" />
       <ScmDocumentDialog ref="shippingDialogRef" @success="handleShippingSaved" />
@@ -50,12 +62,9 @@
         :data="shippingLineChoices"
         :columns="shippingLineColumns"
         :show-pagination="false"
-        :empty-text="shippingPickerLoading ? '正在加载可发明细…' : '暂无可发明细'"
-        :empty-description="
-          shippingPickerLoading
-            ? '正在核对订单状态和剩余可发数量。'
-            : '当前订单已无可下推的发货数量。'
-        "
+        :loading="shippingPickerLoading"
+        empty-text="暂无可发明细"
+        empty-description="当前订单已无可下推的发货数量。"
         @confirm="confirmShippingLines"
       >
         <template #trigger><span class="hidden" /></template>
@@ -105,6 +114,12 @@
   import type { ColumnOption } from '@/types'
   import { formatCurrencyValue } from '@/utils/ui/format'
   import {
+    expandDocumentLines,
+    documentGroupSpan,
+    loadAllDocumentPages,
+    paginateDetailRows
+  } from '@/utils/business/document-detail-list'
+  import {
     activateScmProjectQuotation,
     deleteScmSalesDocument,
     fetchScmCustomerOptions,
@@ -128,6 +143,7 @@
     type ScmSalesDocumentWrite
   } from '@scm/api'
   import { scmDocumentConfigs, type ScmDocumentTransition } from './document-config'
+  import { calculateQuotationLine } from './quotation-pricing'
   import ScmDocumentDialog from './modules/scm-document-dialog.vue'
   import ScmDocumentDetailDrawer from './modules/scm-document-detail-drawer.vue'
   import QuotationConversionDialog from './modules/quotation-conversion-dialog.vue'
@@ -138,6 +154,28 @@
   defineOptions({ name: 'ScmDocumentWorkspace' })
 
   const props = defineProps<{ kind: ScmDocumentKind }>()
+  const displayMode = ref<'document' | 'line'>('document')
+  const visibleRows = ref<SalesListRow[]>([])
+  const lineProperties = new Set([
+    'detailLine.lineNo',
+    'detailLine.materialCode',
+    'materialDescription',
+    'quantity',
+    'detailLine.salesUnit',
+    'detailLine.unitPrice',
+    'detailLine.taxRate'
+  ])
+  function mergeDocumentCells({
+    rowIndex,
+    column
+  }: {
+    rowIndex: number
+    column: { property?: string }
+  }) {
+    return displayMode.value === 'line'
+      ? documentGroupSpan(visibleRows.value, rowIndex, column.property, lineProperties)
+      : ([1, 1] as [number, number])
+  }
   const config = computed(() => scmDocumentConfigs[props.kind])
   const router = useRouter()
   const { confirmAction } = useArtFeedback()
@@ -193,6 +231,29 @@
   const workOrderDialogRef = ref<{ handleOpen: (record: ScmSalesDocument) => Promise<void> }>()
   const bomDialogRef = ref<{ handleOpen: (record: ScmSalesDocument) => Promise<void> }>()
   const search = ref<ScmSalesDocumentQuery>({ keyword: '' })
+  type SalesListRow = ScmSalesDocument & {
+    detailRowId?: string
+    detailLine?: ScmDocumentLine
+    detailGroupStart?: boolean
+  }
+  function groupValue(row: SalesListRow, value: string): string {
+    return row.detailLine && row.detailGroupStart === false ? '' : value
+  }
+  function quotationTotals(row: SalesListRow): { untaxed: number; taxed: number } {
+    if (row.detailLine) {
+      const amount = calculateQuotationLine(row.detailLine)
+      return { untaxed: amount.amount, taxed: amount.total }
+    }
+    return {
+      untaxed: row.totalAmount,
+      taxed: row.lines.reduce((sum, line) => sum + calculateQuotationLine(line).total, 0)
+    }
+  }
+  async function onDisplayModeChange(): Promise<void> {
+    tableRef.value?.clearSelection()
+    tableRef.value?.resetColumns()
+    await tableRef.value?.refreshContext()
+  }
   const importTenantId = computed(
     () => effectiveTenantId.value || search.value.tenantId || defaultWriteTenantId.value || ''
   )
@@ -245,6 +306,7 @@
   )
 
   const searchItems = computed<SearchFormItem[]>(() => [
+    { label: '展示方式', key: 'displayMode', type: 'text' },
     ...(isPlatformSuper.value && !effectiveTenantId.value
       ? [
           {
@@ -309,6 +371,17 @@
       exportSheetName: config.value.title,
       exportColumns: [
         { key: 'documentNo', title: config.value.numberLabel },
+        ...(displayMode.value === 'line'
+          ? [
+              { key: 'lineNo', title: '明细行号' },
+              { key: 'materialCode', title: '物料编码' },
+              { key: 'materialDescription', title: '物料描述' },
+              { key: 'quantity', title: '报价数量' },
+              { key: 'salesUnit', title: '销售单位' },
+              { key: 'unitPrice', title: '未税单价' },
+              { key: 'taxRate', title: '税率(%)' }
+            ]
+          : []),
         ...(props.kind === 'sales_quotation' ? [{ key: 'quotationScene', title: '报价场景' }] : []),
         { key: 'projectName', title: '项目名称' },
         { key: 'customerName', title: '客户全称' },
@@ -324,7 +397,13 @@
           : []),
         { key: 'subtotal', title: '金额(元)' },
         { key: 'taxAmount', title: '税金(元)' },
-        { key: 'totalAmount', title: '总价(元)' },
+        {
+          key: 'totalAmount',
+          title: props.kind === 'sales_quotation' ? '不含税总价(元)' : '总价(元)'
+        },
+        ...(props.kind === 'sales_quotation'
+          ? [{ key: 'taxInclusiveTotal', title: '含税总价(元)' }]
+          : []),
         { key: 'remark', title: '备注' }
       ],
       exportData: exportDocuments
@@ -332,29 +411,9 @@
   ])
 
   const selectionActions = computed<ArtTableQueryHeaderAction[]>(() =>
-    props.kind === 'sales_order'
-      ? [
-          {
-            permission: config.value.permissions.Delete,
-            key: 'batch-delete',
-            label: '批量删除',
-            icon: 'ri:delete-bin-line',
-            selectionRequired: true,
-            disabled: (ctx) => ctx.selectedRows.some((row) => row.status !== 'draft'),
-            onClick: (ctx) =>
-              handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
-          },
-          {
-            permission: 'ScmSalesOrder:Push',
-            key: 'push-shipping',
-            label: '下推发货单',
-            icon: 'ri:truck-line',
-            selectionRequired: true,
-            disabled: (ctx) => ctx.selectedRows.length !== 1 || !hasAuth('ScmShippingNotice:Add'),
-            onClick: (ctx) => openDownpush(String(ctx.selectedRows[0]?.id ?? ''))
-          }
-        ]
-      : props.kind === 'shipping_notice' || props.kind === 'loading'
+    displayMode.value === 'line'
+      ? []
+      : props.kind === 'sales_order'
         ? [
             {
               permission: config.value.permissions.Delete,
@@ -366,107 +425,138 @@
               onClick: (ctx) =>
                 handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
             },
-            ...(props.kind === 'shipping_notice'
-              ? [
-                  {
-                    permission: 'ScmLoading:Add',
-                    key: 'push-loading',
-                    label: '下推发货装车',
-                    icon: 'ri:truck-fill',
-                    selectionRequired: true,
-                    disabled: (ctx: ArtTableQueryHeaderActionContext) =>
-                      ctx.selectedRows.length !== 1 ||
-                      (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'submitted',
-                    onClick: (ctx: ArtTableQueryHeaderActionContext) =>
-                      openLoadingFromNotice(ctx.selectedRows[0] as ScmSalesDocument)
-                  }
-                ]
-              : [
-                  {
-                    permission: 'ScmLoadingOutbound:View',
-                    key: 'push-loading-outbound',
-                    label: '下推装车出库',
-                    icon: 'ri:logout-box-r-line',
-                    selectionRequired: true,
-                    disabled: (ctx: ArtTableQueryHeaderActionContext) =>
-                      ctx.selectedRows.length !== 1 ||
-                      !['loaded', 'completed'].includes(
-                        (ctx.selectedRows[0] as ScmSalesDocument)?.status
-                      ),
-                    onClick: (ctx: ArtTableQueryHeaderActionContext) =>
-                      openLoadingOutbound(ctx.selectedRows[0] as ScmSalesDocument)
-                  }
-                ])
+            {
+              permission: 'ScmSalesOrder:Push',
+              key: 'push-shipping',
+              label: '下推发货单',
+              icon: 'ri:truck-line',
+              selectionRequired: true,
+              disabled: (ctx) => ctx.selectedRows.length !== 1 || !hasAuth('ScmShippingNotice:Add'),
+              onClick: (ctx) => openDownpush(String(ctx.selectedRows[0]?.id ?? ''))
+            }
           ]
-        : props.kind === 'sales_quotation'
+        : props.kind === 'shipping_notice' || props.kind === 'loading'
           ? [
-              {
-                permission: config.value.permissions.GenerateMaterial,
-                key: 'generate-material',
-                label: '生成物料编码',
-                icon: 'ri:barcode-line',
-                selectionRequired: true,
-                disabled: (ctx) =>
-                  ctx.selectedRows.length !== 1 ||
-                  !hasAuth('MdmMaterialArchive:Add') ||
-                  (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'draft' ||
-                  (ctx.selectedRows[0] as ScmSalesDocument)?.workflowStatus === 'running' ||
-                  !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.some(
-                    (line) => !line.materialId
-                  ),
-                onClick: (ctx) =>
-                  void materialDialogRef.value?.handleOpen(ctx.selectedRows[0] as ScmSalesDocument)
-              },
               {
                 permission: config.value.permissions.Delete,
                 key: 'batch-delete',
                 label: '批量删除',
                 icon: 'ri:delete-bin-line',
                 selectionRequired: true,
-                disabled: (ctx) =>
-                  ctx.selectedRows.some(
-                    (row) =>
-                      (row as ScmSalesDocument).status !== 'draft' ||
-                      (row as ScmSalesDocument).workflowStatus === 'running'
-                  ),
+                disabled: (ctx) => ctx.selectedRows.some((row) => row.status !== 'draft'),
                 onClick: (ctx) =>
                   handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
               },
-              {
-                permission: config.value.permissions.GenerateWorkOrder,
-                key: 'generate-work-order',
-                label: '转生产工单',
-                icon: 'ri:hammer-line',
-                selectionRequired: true,
-                disabled: (ctx) =>
-                  ctx.selectedRows.length !== 1 ||
-                  !hasAuth('MesWorkOrder:Add') ||
-                  (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'effective' ||
-                  !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.some((line) => line.materialId),
-                onClick: (ctx) =>
-                  void workOrderDialogRef.value?.handleOpen(ctx.selectedRows[0] as ScmSalesDocument)
-              },
-              {
-                permission: config.value.permissions.GenerateBom,
-                key: 'generate-bom',
-                label: '转报价BOM',
-                icon: 'ri:node-tree',
-                selectionRequired: true,
-                disabled: (ctx) =>
-                  ctx.selectedRows.length !== 1 ||
-                  !hasAuth('MdmBomMaintenance:Add') ||
-                  (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'effective' ||
-                  !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.length ||
-                  (ctx.selectedRows[0] as ScmSalesDocument)?.lines.some((line) => !line.materialId),
-                onClick: (ctx) =>
-                  void bomDialogRef.value?.handleOpen(ctx.selectedRows[0] as ScmSalesDocument)
-              }
+              ...(props.kind === 'shipping_notice'
+                ? [
+                    {
+                      permission: 'ScmLoading:Add',
+                      key: 'push-loading',
+                      label: '下推发货装车',
+                      icon: 'ri:truck-fill',
+                      selectionRequired: true,
+                      disabled: (ctx: ArtTableQueryHeaderActionContext) =>
+                        ctx.selectedRows.length !== 1 ||
+                        (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'submitted',
+                      onClick: (ctx: ArtTableQueryHeaderActionContext) =>
+                        openLoadingFromNotice(ctx.selectedRows[0] as ScmSalesDocument)
+                    }
+                  ]
+                : [
+                    {
+                      permission: 'ScmLoadingOutbound:View',
+                      key: 'push-loading-outbound',
+                      label: '下推装车出库',
+                      icon: 'ri:logout-box-r-line',
+                      selectionRequired: true,
+                      disabled: (ctx: ArtTableQueryHeaderActionContext) =>
+                        ctx.selectedRows.length !== 1 ||
+                        !['loaded', 'completed'].includes(
+                          (ctx.selectedRows[0] as ScmSalesDocument)?.status
+                        ),
+                      onClick: (ctx: ArtTableQueryHeaderActionContext) =>
+                        openLoadingOutbound(ctx.selectedRows[0] as ScmSalesDocument)
+                    }
+                  ])
             ]
-          : []
+          : props.kind === 'sales_quotation'
+            ? [
+                {
+                  permission: config.value.permissions.GenerateMaterial,
+                  key: 'generate-material',
+                  label: '生成物料编码',
+                  icon: 'ri:barcode-line',
+                  selectionRequired: true,
+                  disabled: (ctx) =>
+                    ctx.selectedRows.length !== 1 ||
+                    !hasAuth('MdmMaterialArchive:Add') ||
+                    (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'draft' ||
+                    (ctx.selectedRows[0] as ScmSalesDocument)?.workflowStatus === 'running' ||
+                    !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.some(
+                      (line) => !line.materialId
+                    ),
+                  onClick: (ctx) =>
+                    void materialDialogRef.value?.handleOpen(
+                      ctx.selectedRows[0] as ScmSalesDocument
+                    )
+                },
+                {
+                  permission: config.value.permissions.Delete,
+                  key: 'batch-delete',
+                  label: '批量删除',
+                  icon: 'ri:delete-bin-line',
+                  selectionRequired: true,
+                  disabled: (ctx) =>
+                    ctx.selectedRows.some(
+                      (row) =>
+                        (row as ScmSalesDocument).status !== 'draft' ||
+                        (row as ScmSalesDocument).workflowStatus === 'running'
+                    ),
+                  onClick: (ctx) =>
+                    handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
+                },
+                {
+                  permission: config.value.permissions.GenerateWorkOrder,
+                  key: 'generate-work-order',
+                  label: '转生产工单',
+                  icon: 'ri:hammer-line',
+                  selectionRequired: true,
+                  disabled: (ctx) =>
+                    ctx.selectedRows.length !== 1 ||
+                    !hasAuth('MesWorkOrder:Add') ||
+                    (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'effective' ||
+                    !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.some(
+                      (line) => line.materialId
+                    ),
+                  onClick: (ctx) =>
+                    void workOrderDialogRef.value?.handleOpen(
+                      ctx.selectedRows[0] as ScmSalesDocument
+                    )
+                },
+                {
+                  permission: config.value.permissions.GenerateBom,
+                  key: 'generate-bom',
+                  label: '转报价BOM',
+                  icon: 'ri:node-tree',
+                  selectionRequired: true,
+                  disabled: (ctx) =>
+                    ctx.selectedRows.length !== 1 ||
+                    !hasAuth('MdmBomMaintenance:Add') ||
+                    (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'effective' ||
+                    !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.length ||
+                    (ctx.selectedRows[0] as ScmSalesDocument)?.lines.some(
+                      (line) => !line.materialId
+                    ),
+                  onClick: (ctx) =>
+                    void bomDialogRef.value?.handleOpen(ctx.selectedRows[0] as ScmSalesDocument)
+                }
+              ]
+            : []
   )
 
-  const columnsFactory = (): ColumnOption<ScmSalesDocument>[] => [
-    ...(['sales_order', 'sales_quotation', 'shipping_notice', 'loading'].includes(props.kind)
+  const columnsFactory = (): ColumnOption<SalesListRow>[] => [
+    ...(displayMode.value !== 'line' &&
+    ['sales_order', 'sales_quotation', 'shipping_notice', 'loading'].includes(props.kind)
       ? [{ type: 'selection' as const, width: 48, fixed: 'left' as const }]
       : []),
     {
@@ -474,22 +564,25 @@
       label: config.value.numberLabel,
       minWidth: 190,
       fixed: 'left',
-      formatter: (row) => (
-        <button
-          type="button"
-          class="max-w-full truncate text-left font-semibold text-[var(--el-color-primary)] hover:underline focus-visible:outline-2"
-          title={row.documentNo}
-          onClick={() => void detailDrawerRef.value?.handleOpen(row)}
-        >
-          {row.documentNo}
-        </button>
-      )
+      formatter: (row) =>
+        row.detailGroupStart === false ? (
+          ''
+        ) : (
+          <button
+            type="button"
+            class="max-w-full truncate text-left font-semibold text-[var(--el-color-primary)] hover:underline focus-visible:outline-2"
+            title={row.documentNo}
+            onClick={() => void detailDrawerRef.value?.handleOpen(row)}
+          >
+            {row.documentNo}
+          </button>
+        )
     },
     {
       prop: 'documentTypeId',
       label: '单据类型',
       minWidth: 140,
-      formatter: (row) => row.documentType?.documentTypeName || '--'
+      formatter: (row) => groupValue(row, row.documentType?.documentTypeName || '--')
     },
     ...(['sales_quotation', 'sales_contract', 'sales_order'].includes(props.kind)
       ? [
@@ -497,8 +590,8 @@
             prop: 'quotationScene',
             label: '报价场景',
             minWidth: 125,
-            formatter: (row: ScmSalesDocument) =>
-              row.details.quotationScene === 'project' ? '项目工程' : '标准产品'
+            formatter: (row: SalesListRow) =>
+              groupValue(row, row.details.quotationScene === 'project' ? '项目工程' : '标准产品')
           } as ColumnOption<ScmSalesDocument>
         ]
       : []),
@@ -506,19 +599,20 @@
       prop: 'projectId',
       label: '项目名称',
       minWidth: 190,
-      formatter: (row) => row.project?.projectName || row.details.plannedProjectName || '--'
+      formatter: (row) =>
+        groupValue(row, row.project?.projectName || row.details.plannedProjectName || '--')
     },
     {
       prop: 'projectCode',
       label: '项目编码',
       minWidth: 140,
-      formatter: (row) => row.project?.projectCode || '--'
+      formatter: (row) => groupValue(row, row.project?.projectCode || '--')
     },
     {
       prop: 'customerId',
       label: '客户全称',
       minWidth: 190,
-      formatter: (row) => row.customer?.customerName || '--'
+      formatter: (row) => groupValue(row, row.customer?.customerName || '--')
     },
     ...(config.value.sourceKind
       ? [
@@ -531,7 +625,24 @@
         ]
       : []),
     ...detailColumns(),
-    ...(props.kind === 'sales_quotation' ||
+    ...(displayMode.value === 'line'
+      ? [
+          {
+            prop: 'detailLine.lineNo',
+            label: '明细行号',
+            width: 95,
+            formatter: (row: SalesListRow) => row.detailLine?.lineNo ?? '—'
+          },
+          {
+            prop: 'detailLine.materialCode',
+            label: '物料编码',
+            minWidth: 150,
+            formatter: (row: SalesListRow) => row.detailLine?.materialCode || '—'
+          }
+        ]
+      : []),
+    ...(displayMode.value === 'line' ||
+    props.kind === 'sales_quotation' ||
     props.kind === 'sales_contract' ||
     props.kind === 'sales_order'
       ? [
@@ -539,20 +650,55 @@
             prop: 'materialDescription',
             label: '物料描述',
             minWidth: 180,
-            formatter: (row: ScmSalesDocument) => row.lines[0]?.materialDescription || '--'
+            formatter: (row: SalesListRow) =>
+              row.detailLine?.materialDescription || row.lines[0]?.materialDescription || '--'
           },
           {
             prop: 'quantity',
             label: '报价/销售数量',
             minWidth: 130,
             align: 'right' as const,
-            formatter: (row: ScmSalesDocument) =>
-              row.lines.reduce((sum, line) => sum + line.quantity, 0)
+            formatter: (row: SalesListRow) =>
+              row.detailLine?.quantity ?? row.lines.reduce((sum, line) => sum + line.quantity, 0)
           }
         ]
       : []),
-    { prop: 'documentDate', label: '单据日期', width: 120 },
-    { prop: 'deliveryDate', label: '交货日期', width: 120 },
+    ...(displayMode.value === 'line'
+      ? [
+          {
+            prop: 'detailLine.salesUnit',
+            label: '销售单位',
+            width: 110,
+            formatter: (row: SalesListRow) => row.detailLine?.salesUnit || '—'
+          },
+          {
+            prop: 'detailLine.unitPrice',
+            label: '未税单价',
+            width: 130,
+            align: 'right' as const,
+            formatter: (row: SalesListRow) => formatCurrencyValue(row.detailLine?.unitPrice ?? 0)
+          },
+          {
+            prop: 'detailLine.taxRate',
+            label: '税率',
+            width: 85,
+            align: 'right' as const,
+            formatter: (row: SalesListRow) => `${row.detailLine?.taxRate ?? 0}%`
+          }
+        ]
+      : []),
+    {
+      prop: 'documentDate',
+      label: '单据日期',
+      width: 120,
+      formatter: (row: SalesListRow) => groupValue(row, row.documentDate)
+    },
+    {
+      prop: 'deliveryDate',
+      label: '交货日期',
+      width: 120,
+      formatter: (row: SalesListRow) => groupValue(row, row.deliveryDate || '—')
+    },
     {
       prop: 'status',
       label: '状态',
@@ -610,42 +756,68 @@
       : []),
     {
       prop: 'totalAmount',
-      label: '总价',
+      label: props.kind === 'sales_quotation' ? '不含税总价' : '总价',
       width: 150,
       align: 'right',
-      formatter: (row) => (
-        <strong class="font-semibold text-[var(--el-color-primary)]">
-          {formatCurrencyValue(row.totalAmount)}
-        </strong>
-      )
+      formatter: (row) =>
+        row.detailGroupStart === false ? (
+          ''
+        ) : (
+          <strong class="font-semibold text-[var(--el-color-primary)]">
+            {formatCurrencyValue(
+              props.kind === 'sales_quotation' ? quotationTotals(row).untaxed : row.totalAmount
+            )}
+          </strong>
+        )
     },
+    ...(props.kind === 'sales_quotation'
+      ? [
+          {
+            prop: 'taxInclusiveTotal',
+            label: '含税总价',
+            width: 150,
+            align: 'right' as const,
+            formatter: (row: SalesListRow) =>
+              row.detailGroupStart === false ? (
+                ''
+              ) : (
+                <strong class="font-semibold text-[var(--el-color-primary)]">
+                  {formatCurrencyValue(quotationTotals(row).taxed)}
+                </strong>
+              )
+          }
+        ]
+      : []),
     { prop: 'remark', label: '备注', minWidth: 200, showOverflowTooltip: true },
     {
       prop: 'operation',
       label: '操作',
       width: 168,
       fixed: 'right',
-      formatter: (row) => (
-        <BusinessTableRowActions>
-          <ArtButtonTable
-            type="view"
-            permission={config.value.permissions.View}
-            onClick={() => void detailDrawerRef.value?.handleOpen(row)}
-          />
-          {canEdit(row) && props.kind !== 'project_quotation' && (
+      formatter: (row) =>
+        row.detailGroupStart === false ? (
+          ''
+        ) : (
+          <BusinessTableRowActions>
             <ArtButtonTable
-              type="edit"
-              label={props.kind === 'sales_order' ? '编制' : '编辑'}
-              permission={config.value.permissions.Edit}
-              onClick={() => openDialog(row)}
+              type="view"
+              permission={config.value.permissions.View}
+              onClick={() => void detailDrawerRef.value?.handleOpen(row)}
             />
-          )}
-          <ArtButtonMore
-            list={moreActions(row)}
-            onClick={(item: ButtonMoreItem) => void handleMoreAction(row, String(item.key))}
-          />
-        </BusinessTableRowActions>
-      )
+            {canEdit(row) && props.kind !== 'project_quotation' && (
+              <ArtButtonTable
+                type="edit"
+                label={props.kind === 'sales_order' ? '编制' : '编辑'}
+                permission={config.value.permissions.Edit}
+                onClick={() => openDialog(row)}
+              />
+            )}
+            <ArtButtonMore
+              list={moreActions(row)}
+              onClick={(item: ButtonMoreItem) => void handleMoreAction(row, String(item.key))}
+            />
+          </BusinessTableRowActions>
+        )
     }
   ]
 
@@ -1062,18 +1234,54 @@
     void (mode === 'add' ? tableRef.value?.refreshCreate() : tableRef.value?.refreshUpdate())
   }
 
+  async function fetchAllQuotationDocuments(
+    query: ScmSalesDocumentQuery
+  ): Promise<ScmSalesDocument[]> {
+    return loadAllDocumentPages((page) => fetchScmSalesDocuments(props.kind, page), query)
+  }
+
+  function expandQuotationLines(documents: ScmSalesDocument[]) {
+    return expandDocumentLines(
+      documents,
+      (document) => document.lines,
+      (line, index) => line.lineId || String(index)
+    )
+  }
+
   async function fetchPage(query: ScmSalesDocumentQuery) {
-    return fetchScmSalesDocuments(props.kind, query)
+    if (displayMode.value === 'document') {
+      visibleRows.value = []
+      return fetchScmSalesDocuments(props.kind, query)
+    }
+    const result = {
+      ...paginateDetailRows(
+        expandQuotationLines(await fetchAllQuotationDocuments(query)),
+        query.from,
+        query.to
+      ),
+      error: null
+    }
+    visibleRows.value = result.data
+    return result
   }
 
   async function exportDocuments(): Promise<Array<Record<string, unknown>>> {
-    const { data } = await fetchScmSalesDocuments(props.kind, {
-      ...search.value,
-      from: 0,
-      to: 9999
-    })
-    return (data ?? []).map((row) => ({
+    const documents =
+      displayMode.value === 'line'
+        ? await fetchAllQuotationDocuments(search.value)
+        : ((await fetchScmSalesDocuments(props.kind, { ...search.value, from: 0, to: 9999 }))
+            .data ?? [])
+    const rows: SalesListRow[] =
+      displayMode.value === 'line' ? expandQuotationLines(documents) : documents
+    return rows.map((row) => ({
       documentNo: row.documentNo,
+      lineNo: row.detailLine?.lineNo,
+      materialCode: row.detailLine?.materialCode,
+      materialDescription: row.detailLine?.materialDescription,
+      quantity: row.detailLine?.quantity,
+      salesUnit: row.detailLine?.salesUnit,
+      unitPrice: row.detailLine?.unitPrice,
+      taxRate: row.detailLine?.taxRate,
       quotationScene: row.details.quotationScene === 'project' ? '工程' : '标准',
       projectName: row.project?.projectName || row.details.plannedProjectName || '',
       customerName: row.customer?.customerName || '',
@@ -1091,7 +1299,9 @@
       salesDepartment: row.details.salesDepartment || '',
       subtotal: row.subtotal,
       taxAmount: row.taxAmount,
-      totalAmount: row.totalAmount,
+      totalAmount:
+        props.kind === 'sales_quotation' ? quotationTotals(row).untaxed : row.totalAmount,
+      taxInclusiveTotal: props.kind === 'sales_quotation' ? quotationTotals(row).taxed : undefined,
       remark: row.remark || ''
     }))
   }

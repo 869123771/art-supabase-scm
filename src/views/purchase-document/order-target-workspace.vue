@@ -13,18 +13,31 @@
         ]"
       />
       <ArtTableQuery
+        ref="tableRef"
         v-model="search"
         :search-items="searchItems"
         :api-fn="fetchPage"
         :columns-factory="columnsFactory"
         :table-props="{
-          rowKey: 'id',
+          rowKey: displayMode === 'line' ? 'detailRowId' : 'id',
+          spanMethod: mergeDocumentCells,
           tableLayout: 'fixed',
           emptyText: `暂无${config.title}目标单据`,
           emptyDescription: '在采购订单列表勾选已审核订单，通过“下推”选择目标和明细。'
         }"
         focusable
-      />
+      >
+        <template #search-displayMode>
+          <ElRadioGroup
+            v-model="displayMode"
+            aria-label="单据列表展示方式"
+            @change="tableRef?.refreshContext()"
+          >
+            <ElRadioButton label="document" value="document">按单据</ElRadioButton>
+            <ElRadioButton label="line" value="line">按明细</ElRadioButton>
+          </ElRadioGroup>
+        </template>
+      </ArtTableQuery>
       <ArtDialog ref="detailDialogRef" size="xl">
         <div v-if="selected" class="flex min-w-0 flex-col gap-4">
           <ElAlert v-if="loadError" type="error" :closable="false" show-icon>
@@ -75,18 +88,28 @@
   import ArtPermissionGuard from '@/components/core/feedback/art-permission-guard/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import ArtTable from '@/components/core/tables/art-table/index.vue'
-  import ArtTableQuery from '@/components/core/tables/art-table-query/index.vue'
+  import ArtTableQuery, {
+    type ArtTableQueryExpose
+  } from '@/components/core/tables/art-table-query/index.vue'
   import type { SearchFormItem } from '@/components/core/forms/art-search-bar/index.vue'
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
   import { useTenantScopeStore } from '@/store/modules/tenant-scope'
   import { formatCurrencyValue } from '@/utils/ui/format'
   import type { ColumnOption } from '@/types'
   import {
+    documentGroupSpan,
+    expandDocumentLines,
+    loadAllDocumentPages,
+    paginateDetailRows
+  } from '@/utils/business/document-detail-list'
+  import {
     fetchScmOrderTargetLines,
+    fetchScmOrderTargetLinesForDocuments,
     fetchScmOrderTargets,
     type ScmOrderTargetDocument,
     type ScmOrderTargetKind,
-    type ScmOrderTargetLine
+    type ScmOrderTargetLine,
+    type ScmOrderTargetListLine
   } from '@scm/api'
 
   defineOptions({ name: 'ScmOrderTargetWorkspace' })
@@ -118,6 +141,33 @@
     }
   } as const
   const config = computed(() => configs[props.kind])
+  const tableRef = ref<ArtTableQueryExpose>()
+  const displayMode = ref<'document' | 'line'>('document')
+  type OrderTargetListRow = ScmOrderTargetDocument & {
+    detailRowId?: string
+    detailLine?: ScmOrderTargetListLine
+    detailGroupStart?: boolean
+  }
+  const visibleRows = ref<OrderTargetListRow[]>([])
+  const lineProperties = new Set([
+    'detailLineNo',
+    'detailMaterialCode',
+    'detailMaterialDescription',
+    'detailQuantity',
+    'detailUnit',
+    'detailAmount'
+  ])
+  function mergeDocumentCells({
+    rowIndex,
+    column
+  }: {
+    rowIndex: number
+    column: { property?: string }
+  }) {
+    return displayMode.value === 'line'
+      ? documentGroupSpan(visibleRows.value, rowIndex, column.property, lineProperties)
+      : ([1, 1] as [number, number])
+  }
   const { effectiveTenantId } = storeToRefs(useTenantScopeStore())
   const search = ref<{ keyword: string }>({ keyword: '' })
   const selected = ref<ScmOrderTargetDocument>()
@@ -125,6 +175,7 @@
   const loadError = ref(false)
   const detailDialogRef = ref<ArtDialogExpose<ScmOrderTargetDocument>>()
   const searchItems: SearchFormItem[] = [
+    { label: '展示方式', key: 'displayMode', type: 'text' },
     {
       label: '目标单号',
       key: 'keyword',
@@ -135,7 +186,7 @@
   const formatDateTime = (value: string) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '—')
   const statusLabel = (status: ScmOrderTargetDocument['status']) =>
     ({ draft: '待处理', partial: '部分入库', completed: '已完成' })[status]
-  const columnsFactory = (): ColumnOption<ScmOrderTargetDocument>[] => [
+  const columnsFactory = (): ColumnOption<OrderTargetListRow>[] => [
     {
       prop: 'documentNo',
       label: '目标单号',
@@ -176,7 +227,50 @@
       label: '下推时间',
       minWidth: 180,
       formatter: (row) => formatDateTime(row.createdAt)
-    }
+    },
+    ...(displayMode.value === 'line'
+      ? [
+          {
+            prop: 'detailLineNo',
+            label: '明细行号',
+            width: 90,
+            formatter: (row: OrderTargetListRow) => row.detailLine?.lineSnapshot.lineNo ?? '—'
+          },
+          {
+            prop: 'detailMaterialCode',
+            label: '物料编码',
+            minWidth: 145,
+            formatter: (row: OrderTargetListRow) => row.detailLine?.lineSnapshot.materialCode || '—'
+          },
+          {
+            prop: 'detailMaterialDescription',
+            label: '物料描述',
+            minWidth: 190,
+            formatter: (row: OrderTargetListRow) =>
+              row.detailLine?.lineSnapshot.materialDescription || '—'
+          },
+          {
+            prop: 'detailQuantity',
+            label: '数量',
+            width: 110,
+            align: 'right' as const,
+            formatter: (row: OrderTargetListRow) => row.detailLine?.lineSnapshot.quantity ?? 0
+          },
+          {
+            prop: 'detailUnit',
+            label: '采购单位',
+            width: 100,
+            formatter: (row: OrderTargetListRow) => row.detailLine?.lineSnapshot.unit || '—'
+          },
+          {
+            prop: 'detailAmount',
+            label: '明细价税合计',
+            width: 140,
+            align: 'right' as const,
+            formatter: (row: OrderTargetListRow) => formatCurrencyValue(row.detailLine?.amount ?? 0)
+          }
+        ]
+      : [])
   ]
   const lineColumns: ColumnOption<ScmOrderTargetLine>[] = [
     {
@@ -225,8 +319,32 @@
       formatter: (row) => formatCurrencyValue(row.amount)
     }
   ]
-  const fetchPage = (query: { keyword?: string; from?: number; to?: number }) =>
-    fetchScmOrderTargets(props.kind, { ...query, tenantId: effectiveTenantId.value || undefined })
+  async function fetchPage(query: { keyword?: string; from?: number; to?: number }) {
+    const fetchDocuments = (page: typeof query) =>
+      fetchScmOrderTargets(props.kind, { ...page, tenantId: effectiveTenantId.value || undefined })
+    if (displayMode.value === 'document') {
+      visibleRows.value = []
+      return fetchDocuments(query)
+    }
+    const documents = await loadAllDocumentPages(fetchDocuments, query)
+    const lines = await fetchScmOrderTargetLinesForDocuments(
+      documents.map((document) => document.id)
+    )
+    const linesByDocument = new Map<string, ScmOrderTargetListLine[]>()
+    for (const line of lines) {
+      const group = linesByDocument.get(line.targetDocumentId) || []
+      group.push(line)
+      linesByDocument.set(line.targetDocumentId, group)
+    }
+    const rows = expandDocumentLines(
+      documents,
+      (document) => linesByDocument.get(document.id) || [],
+      (line) => line.id
+    )
+    const result = { ...paginateDetailRows(rows, query.from, query.to), error: null }
+    visibleRows.value = result.data
+    return result
+  }
   async function loadLines(): Promise<void> {
     if (!selected.value) return
     loadError.value = false

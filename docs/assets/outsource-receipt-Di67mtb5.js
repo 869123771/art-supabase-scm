@@ -1,1 +1,0 @@
-import{Ci as e,Yi as t,ji as n}from"./sys-CTmdd8ec.js";import{t as r}from"./order-target-workspace-KvWbml4c.js";var i=n({name:`ScmOutsourceReceipt`,__name:`index`,setup(n){return(n,i)=>(t(),e(r,{kind:`outsource_receipt`}))}});export{i as default};

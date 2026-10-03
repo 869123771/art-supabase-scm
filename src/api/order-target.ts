@@ -1,4 +1,5 @@
 import { useSupabase } from '@/hooks'
+import { fetchAllRangePages } from '@/utils/supabase/pagination'
 
 export type ScmOrderTargetKind =
   'purchase_inbound' | 'return_request' | 'outsource_receipt' | 'outsource_inbound'
@@ -32,6 +33,10 @@ export interface ScmOrderTargetLine {
     sourceDocumentNo?: string
     gift?: boolean
   }
+}
+
+export interface ScmOrderTargetListLine extends ScmOrderTargetLine {
+  targetDocumentId: string
 }
 
 const { supabase, responseHandle } = useSupabase()
@@ -69,6 +74,30 @@ export async function fetchScmOrderTargetLines(targetId: string) {
         .order('created_at'),
     { breakReturn: true, showErrorMessage: true, errorMessage: '目标单据明细加载失败' }
   )
+}
+
+export async function fetchScmOrderTargetLinesForDocuments(
+  documentIds: string[]
+): Promise<ScmOrderTargetListLine[]> {
+  const lines: ScmOrderTargetListLine[] = []
+  for (let offset = 0; offset < documentIds.length; offset += 100) {
+    const ids = documentIds.slice(offset, offset + 100)
+    const result = await fetchAllRangePages<ScmOrderTargetListLine>(({ from, to }) =>
+      responseHandle<ScmOrderTargetListLine[]>(
+        () =>
+          supabase
+            .from('scm_order_target_line')
+            .select('id,target_document_id,source_line_id,amount,line_snapshot')
+            .in('target_document_id', ids)
+            .order('created_at')
+            .range(from, to),
+        { breakReturn: true, showErrorMessage: true, errorMessage: '目标单据明细加载失败' }
+      )
+    )
+    if (result.error) throw result.error
+    lines.push(...(result.data ?? []))
+  }
+  return lines
 }
 
 export async function fetchPushedOrderLineIds(orderId: string, kind: ScmOrderTargetKind) {

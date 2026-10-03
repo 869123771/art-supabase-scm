@@ -1,6 +1,8 @@
 import { useSupabase } from '@/hooks'
+import { groupBy, uniq } from 'lodash-es'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
 import { buildOrIlikeFilter } from '@/utils/supabase/search'
+import { fetchAllRangePages } from '@/utils/supabase/pagination'
 import type {
   EmployeeIntegrationItem,
   EmployeeSelectorContractParams
@@ -55,9 +57,9 @@ export async function fetchScmSalespersonOptions(params: EmployeeSelectorContrac
 }
 
 async function withSourceDocuments(documents: ScmSalesDocument[]): Promise<ScmSalesDocument[]> {
-  const sourceIds = [
-    ...new Set(documents.flatMap((document) => (document.sourceId ? [document.sourceId] : [])))
-  ]
+  const sourceIds = uniq(
+    documents.flatMap((document) => (document.sourceId ? [document.sourceId] : []))
+  )
   if (!sourceIds.length) return documents
 
   const { data } = await responseHandle<
@@ -437,53 +439,73 @@ export async function activateScmProjectQuotation(projectQuotationId: string) {
 
 export async function fetchScmEngineeringReferenceOptions(tenantId: string) {
   const [categories, materialTypes, units, codeRules] = await Promise.all([
-    responseHandle<
-      Array<{ id: string; tenantId: string; categoryCode: string; categoryName: string }>
-    >(
-      () =>
-        supabase
-          .from('mdm_material_category')
-          .select('id,tenant_id,category_code,category_name')
-          .eq('tenant_id', tenantId)
-          .eq('status', 'enabled')
-          .order('sort')
-          .order('category_name'),
-      { breakReturn: true, showErrorMessage: false }
+    fetchAllRangePages(({ from, to }) =>
+      responseHandle<
+        Array<{ id: string; tenantId: string; categoryCode: string; categoryName: string }>
+      >(
+        () =>
+          supabase
+            .from('mdm_material_category')
+            .select('id,tenant_id,category_code,category_name')
+            .eq('tenant_id', tenantId)
+            .eq('status', 'enabled')
+            .order('sort')
+            .order('category_name')
+            .order('id')
+            .range(from, to),
+        { breakReturn: true, showErrorMessage: false }
+      )
     ),
-    responseHandle<Array<{ id: string; tenantId: string; typeCode: string; typeName: string }>>(
-      () =>
-        supabase
-          .from('mdm_material_type')
-          .select('id,tenant_id,type_code,type_name')
-          .eq('tenant_id', tenantId)
-          .eq('status', 'enabled')
-          .order('sort')
-          .order('type_name'),
-      { breakReturn: true, showErrorMessage: false }
+    fetchAllRangePages(({ from, to }) =>
+      responseHandle<Array<{ id: string; tenantId: string; typeCode: string; typeName: string }>>(
+        () =>
+          supabase
+            .from('mdm_material_type')
+            .select('id,tenant_id,type_code,type_name')
+            .eq('tenant_id', tenantId)
+            .eq('status', 'enabled')
+            .order('sort')
+            .order('type_name')
+            .order('id')
+            .range(from, to),
+        { breakReturn: true, showErrorMessage: false }
+      )
     ),
-    responseHandle<Array<{ id: string; tenantId: string; unitCode: string; unitName: string }>>(
-      () =>
-        supabase
-          .from('mdm_unit_of_measure')
-          .select('id,tenant_id,unit_code,unit_name')
-          .eq('tenant_id', tenantId)
-          .eq('status', 'enabled')
-          .order('sort')
-          .order('unit_name'),
-      { breakReturn: true, showErrorMessage: false }
+    fetchAllRangePages(({ from, to }) =>
+      responseHandle<Array<{ id: string; tenantId: string; unitCode: string; unitName: string }>>(
+        () =>
+          supabase
+            .from('mdm_unit_of_measure')
+            .select('id,tenant_id,unit_code,unit_name')
+            .eq('tenant_id', tenantId)
+            .eq('status', 'enabled')
+            .order('sort')
+            .order('unit_name')
+            .order('id')
+            .range(from, to),
+        { breakReturn: true, showErrorMessage: false }
+      )
     ),
-    responseHandle<Array<{ id: string; tenantId: string; ruleCode: string; ruleName: string }>>(
-      () =>
-        supabase
-          .from('mdm_material_code_rule')
-          .select('id,tenant_id,rule_code,rule_name')
-          .eq('tenant_id', tenantId)
-          .eq('status', 'enabled')
-          .order('sort')
-          .order('rule_name'),
-      { breakReturn: true, showErrorMessage: false }
+    fetchAllRangePages(({ from, to }) =>
+      responseHandle<Array<{ id: string; tenantId: string; ruleCode: string; ruleName: string }>>(
+        () =>
+          supabase
+            .from('mdm_material_code_rule')
+            .select('id,tenant_id,rule_code,rule_name')
+            .eq('tenant_id', tenantId)
+            .eq('status', 'enabled')
+            .order('sort')
+            .order('rule_name')
+            .order('id')
+            .range(from, to),
+        { breakReturn: true, showErrorMessage: false }
+      )
     )
   ])
+
+  for (const result of [categories, materialTypes, units, codeRules]) {
+    if (result.error) throw result.error
+  }
 
   const data: ScmEngineeringReferenceOptions = {
     categories: (categories.data ?? []).map((item) => ({
@@ -515,71 +537,81 @@ export async function fetchScmEngineeringReferenceOptions(tenantId: string) {
 }
 
 export async function fetchScmCustomerOptions(tenantId?: string, keyword?: string) {
-  let request = supabase
-    .from('mdm_customer')
-    .select('id,tenant_id,customer_code,customer_name')
-    .eq('enabled', true)
-    .order('customer_name')
-    .range(0, 999)
-  if (tenantId) request = request.eq('tenant_id', tenantId)
-  if (keyword) request = request.or(buildOrIlikeFilter(['customer_code', 'customer_name'], keyword))
-  return responseHandle<ScmCustomerOption[]>(() => request, {
-    breakReturn: true,
-    showErrorMessage: true,
-    errorMessage: '客户列表加载失败，请稍后重试'
+  const result = await fetchAllRangePages<ScmCustomerOption>(({ from, to }) => {
+    let request = supabase
+      .from('mdm_customer')
+      .select('id,tenant_id,customer_code,customer_name')
+      .eq('enabled', true)
+      .order('customer_name')
+      .order('id')
+      .range(from, to)
+    if (tenantId) request = request.eq('tenant_id', tenantId)
+    if (keyword)
+      request = request.or(buildOrIlikeFilter(['customer_code', 'customer_name'], keyword))
+    return responseHandle<ScmCustomerOption[]>(() => request, {
+      breakReturn: true,
+      showErrorMessage: true,
+      errorMessage: '客户列表加载失败，请稍后重试'
+    })
   })
+  if (result.error) throw result.error
+  return result
 }
 
 export async function fetchScmMaterialOptions(tenantId?: string, materialIds?: string[]) {
-  let request = supabase
-    .from('mdm_material')
-    .select(
-      'id,tenant_id,material_code,material_name,description,specification_model,basic_unit,material_source,brand,manufacturer,base_unit_id,purchase_unit_id,sales_unit_id,inventory_unit_id,auxiliary_unit_id,auxiliary_unit_2_id,unit_conversions,batch_management_enabled,serial_management_enabled,batch_rule_id,materialCategory:mdm_material_category!smis_material_category_fkey(category_name),materialType:mdm_material_type!mdm_material_type_fkey(type_name),baseUnitRecord:mdm_unit_of_measure!mdm_material_base_unit_fkey(unit_name),purchaseUnit:mdm_unit_of_measure!mdm_material_purchase_unit_id_fkey(unit_name),salesUnit:mdm_unit_of_measure!mdm_material_sales_unit_id_fkey(unit_name),inventoryUnit:mdm_unit_of_measure!mdm_material_inventory_unit_id_fkey(unit_name),auxiliaryUnit:mdm_unit_of_measure!mdm_material_aux_unit_fkey(unit_name),auxiliaryUnit2:mdm_unit_of_measure!mdm_material_aux_unit_2_fkey(unit_name)'
-    )
-    .order('material_name')
-    .range(0, 999)
-  if (tenantId) request = request.eq('tenant_id', tenantId)
-  if (materialIds?.length) request = request.in('id', materialIds)
-  const response = await responseHandle<
-    Array<{
-      id: string
-      tenantId: string
-      materialCode: string
-      materialName: string
-      description: string | null
-      specificationModel: string | null
-      brand: string | null
-      manufacturer: string | null
-      materialCategory: { categoryName: string } | null
-      materialType: { typeName: string } | null
-      basicUnit: string | null
-      baseUnitRecord: { unitName: string } | null
-      baseUnitId: string | null
-      purchaseUnitId: string | null
-      salesUnitId: string | null
-      salesUnit: { unitName: string } | null
-      inventoryUnitId: string | null
-      batchManagementEnabled: boolean
-      serialManagementEnabled: boolean
-      batchRuleId: string | null
-      inventoryUnit: { unitName: string } | null
-      purchaseUnit: { unitName: string } | null
-      materialSource: string | null
-      auxiliaryUnitId: string | null
-      auxiliaryUnit2Id: string | null
-      unitConversions: Array<{
-        sourceUnitId: string
-        baseFactor: number
-        sourceFactor: number
-      }> | null
-      auxiliaryUnit: { unitName: string } | null
-      auxiliaryUnit2: { unitName: string } | null
-    }>
-  >(() => request, {
-    breakReturn: true,
-    showErrorMessage: true,
-    errorMessage: '物料列表加载失败，请稍后重试'
+  const response = await fetchAllRangePages(({ from, to }) => {
+    let request = supabase
+      .from('mdm_material')
+      .select(
+        'id,tenant_id,material_code,material_name,description,specification_model,basic_unit,material_source,brand,manufacturer,base_unit_id,purchase_unit_id,sales_unit_id,inventory_unit_id,auxiliary_unit_id,auxiliary_unit_2_id,unit_conversions,batch_management_enabled,serial_management_enabled,batch_rule_id,materialCategory:mdm_material_category!smis_material_category_fkey(category_name),materialType:mdm_material_type!mdm_material_type_fkey(type_name),baseUnitRecord:mdm_unit_of_measure!mdm_material_base_unit_fkey(unit_name),purchaseUnit:mdm_unit_of_measure!mdm_material_purchase_unit_id_fkey(unit_name),salesUnit:mdm_unit_of_measure!mdm_material_sales_unit_id_fkey(unit_name),inventoryUnit:mdm_unit_of_measure!mdm_material_inventory_unit_id_fkey(unit_name),auxiliaryUnit:mdm_unit_of_measure!mdm_material_aux_unit_fkey(unit_name),auxiliaryUnit2:mdm_unit_of_measure!mdm_material_aux_unit_2_fkey(unit_name)'
+      )
+      .order('material_name')
+      .order('id')
+      .range(from, to)
+    if (tenantId) request = request.eq('tenant_id', tenantId)
+    if (materialIds?.length) request = request.in('id', materialIds)
+    return responseHandle<
+      Array<{
+        id: string
+        tenantId: string
+        materialCode: string
+        materialName: string
+        description: string | null
+        specificationModel: string | null
+        brand: string | null
+        manufacturer: string | null
+        materialCategory: { categoryName: string } | null
+        materialType: { typeName: string } | null
+        basicUnit: string | null
+        baseUnitRecord: { unitName: string } | null
+        baseUnitId: string | null
+        purchaseUnitId: string | null
+        salesUnitId: string | null
+        salesUnit: { unitName: string } | null
+        inventoryUnitId: string | null
+        batchManagementEnabled: boolean
+        serialManagementEnabled: boolean
+        batchRuleId: string | null
+        inventoryUnit: { unitName: string } | null
+        purchaseUnit: { unitName: string } | null
+        materialSource: string | null
+        auxiliaryUnitId: string | null
+        auxiliaryUnit2Id: string | null
+        unitConversions: Array<{
+          sourceUnitId: string
+          baseFactor: number
+          sourceFactor: number
+        }> | null
+        auxiliaryUnit: { unitName: string } | null
+        auxiliaryUnit2: { unitName: string } | null
+      }>
+    >(() => request, {
+      breakReturn: true,
+      showErrorMessage: true,
+      errorMessage: '物料列表加载失败，请稍后重试'
+    })
   })
+  if (response.error) throw response.error
   const data: ScmMaterialOption[] = (response.data ?? []).map((row) => ({
     id: row.id,
     tenantId: row.tenantId,
@@ -613,26 +645,33 @@ export async function fetchScmMaterialOptions(tenantId?: string, materialIds?: s
 }
 
 export async function fetchScmDocumentTypeOptions(tenantId?: string, menuName?: string) {
-  let request = supabase
-    .from('mdm_document_type')
-    .select('id,tenant_id,menu_id,document_type_code,document_type_name,is_default')
-    .eq('enabled', true)
-    .order('sort_order')
-    .range(0, 999)
-  if (tenantId) request = request.eq('tenant_id', tenantId)
+  let menuId: string | undefined
   if (menuName) {
     const menu = await responseHandle<{ id: string }>(
       () => supabase.from('sys_menu').select('id').eq('name', menuName).eq('type', 'menu').single(),
       { breakReturn: true, showErrorMessage: false }
     )
     if (!menu.data) return { data: [] as ScmDocumentTypeOption[] }
-    request = request.eq('menu_id', menu.data.id)
+    menuId = menu.data.id
   }
-  return responseHandle<ScmDocumentTypeOption[]>(() => request, {
-    breakReturn: true,
-    showErrorMessage: true,
-    errorMessage: '单据类型加载失败，请稍后重试'
+  const result = await fetchAllRangePages<ScmDocumentTypeOption>(({ from, to }) => {
+    let request = supabase
+      .from('mdm_document_type')
+      .select('id,tenant_id,menu_id,menu_ids,document_type_code,document_type_name,is_default')
+      .eq('enabled', true)
+      .order('sort_order')
+      .order('id')
+      .range(from, to)
+    if (tenantId) request = request.eq('tenant_id', tenantId)
+    if (menuId) request = request.contains('menu_ids', [menuId])
+    return responseHandle<ScmDocumentTypeOption[]>(() => request, {
+      breakReturn: true,
+      showErrorMessage: true,
+      errorMessage: '单据类型加载失败，请稍后重试'
+    })
   })
+  if (result.error) throw result.error
+  return result
 }
 
 export async function fetchScmSourceOptions(
@@ -641,35 +680,48 @@ export async function fetchScmSourceOptions(
   projectId?: string | null,
   customerId?: string | null
 ) {
-  let request = supabase
-    .from('scm_sales_document')
-    .select('*')
-    .eq('kind', kind)
-    .eq('tenant_id', tenantId)
-    .order('updated_at', { ascending: false })
-    .range(0, 499)
-  if (projectId) request = request.eq('project_id', projectId)
-  if (customerId) request = request.eq('customer_id', customerId)
-  return responseHandle<ScmSalesDocument[]>(() => request, {
-    breakReturn: true,
-    showErrorMessage: true,
-    errorMessage: '来源单据加载失败，请稍后重试'
+  const result = await fetchAllRangePages<ScmSalesDocument>(({ from, to }) => {
+    let request = supabase
+      .from('scm_sales_document')
+      .select('*')
+      .eq('kind', kind)
+      .eq('tenant_id', tenantId)
+      .order('updated_at', { ascending: false })
+      .order('id')
+      .range(from, to)
+    if (projectId) request = request.eq('project_id', projectId)
+    if (customerId) request = request.eq('customer_id', customerId)
+    return responseHandle<ScmSalesDocument[]>(() => request, {
+      breakReturn: true,
+      showErrorMessage: true,
+      errorMessage: '来源单据加载失败，请稍后重试'
+    })
   })
+  if (result.error) throw result.error
+  return result
 }
 
-export async function fetchScmRemainingSourceLines(source: ScmSalesDocument) {
+export async function fetchScmRemainingSourceLines(
+  source: Pick<ScmSalesDocument, 'id' | 'tenantId' | 'kind' | 'lines'>
+) {
   if (source.kind !== 'sales_order' && source.kind !== 'shipping_notice') return source.lines
   const childKind: ScmDocumentKind = source.kind === 'sales_order' ? 'shipping_notice' : 'loading'
-  const response = await responseHandle<Array<Pick<ScmSalesDocument, 'status' | 'lines'>>>(
-    () =>
-      supabase
-        .from('scm_sales_document')
-        .select('id,kind,status,lines')
-        .eq('source_id', source.id)
-        .eq('kind', childKind)
-        .range(0, 9999),
-    { breakReturn: true, showErrorMessage: true, errorMessage: '剩余数量加载失败，请稍后重试' }
+  const response = await fetchAllRangePages<Pick<ScmSalesDocument, 'status' | 'lines'>>(
+    ({ from, to }) =>
+      responseHandle<Array<Pick<ScmSalesDocument, 'status' | 'lines'>>>(
+        () =>
+          supabase
+            .from('scm_sales_document')
+            .select('id,kind,status,lines')
+            .eq('source_id', source.id)
+            .eq('tenant_id', source.tenantId)
+            .eq('kind', childKind)
+            .order('id')
+            .range(from, to),
+        { breakReturn: true, showErrorMessage: true, errorMessage: '剩余数量加载失败，请稍后重试' }
+      )
   )
+  if (response.error) throw response.error
   const allocated = new Map<string, number>()
   for (const child of response.data ?? []) {
     if (['cancelled', 'closed', 'terminated'].includes(child.status)) continue
@@ -791,7 +843,7 @@ export async function fetchScmOutboundStocks(
     reservations.push(...page)
     if (page.length < 500) break
   }
-  const zoneIds = [...new Set(stocks.flatMap((stock) => (stock.zoneId ? [stock.zoneId] : [])))]
+  const zoneIds = uniq(stocks.flatMap((stock) => (stock.zoneId ? [stock.zoneId] : [])))
   const zones = new Map<string, string>()
   for (let offset = 0; offset < zoneIds.length; offset += 100) {
     const result = await responseHandle<Array<{ id: string; zoneName: string }>>(
@@ -1032,11 +1084,15 @@ export async function fetchScmLoadingOutboundRows(
     }
   }
   const posted = new Map<string, number>()
+  const allocationsByLine = groupBy(
+    allocations,
+    (allocation) => `${allocation.loadingId}:${allocation.loadingLineId}`
+  )
   for (const allocation of allocations) {
     const key = `${allocation.loadingId}:${allocation.loadingLineId}`
     posted.set(key, (posted.get(key) ?? 0) + Number(allocation.quantity))
   }
-  const serialIds = [...new Set(allocations.flatMap((allocation) => allocation.serialIds ?? []))]
+  const serialIds = uniq(allocations.flatMap((allocation) => allocation.serialIds ?? []))
   const serials = new Map<string, string>()
   for (let offset = 0; offset < serialIds.length; offset += 100) {
     const result = await responseHandle<Array<{ id: string; serialNo: string }>>(
@@ -1049,7 +1105,7 @@ export async function fetchScmLoadingOutboundRows(
     )
     for (const serial of result.data ?? []) serials.set(serial.id, serial.serialNo)
   }
-  const batchIds = [...new Set(allocations.map((allocation) => allocation.batchId))]
+  const batchIds = uniq(allocations.map((allocation) => allocation.batchId))
   const batches = new Map<
     string,
     { warehouseName: string; zoneId: string | null; binName: string; batchNo: string }
@@ -1082,9 +1138,9 @@ export async function fetchScmLoadingOutboundRows(
       })
     }
   }
-  const zoneIds = [
-    ...new Set([...batches.values()].flatMap((batch) => (batch.zoneId ? [batch.zoneId] : [])))
-  ]
+  const zoneIds = uniq(
+    [...batches.values()].flatMap((batch) => (batch.zoneId ? [batch.zoneId] : []))
+  )
   const zones = new Map<string, string>()
   for (let offset = 0; offset < zoneIds.length; offset += 100) {
     const result = await responseHandle<Array<{ id: string; zoneName: string }>>(
@@ -1097,13 +1153,11 @@ export async function fetchScmLoadingOutboundRows(
     )
     for (const zone of result.data ?? []) zones.set(zone.id, zone.zoneName)
   }
-  const noticeIds = [
-    ...new Set(
-      documents.flatMap((doc) =>
-        doc.lines.flatMap((line) => (line.sourceDocumentId ? [line.sourceDocumentId] : []))
-      )
+  const noticeIds = uniq(
+    documents.flatMap((doc) =>
+      doc.lines.flatMap((line) => (line.sourceDocumentId ? [line.sourceDocumentId] : []))
     )
-  ]
+  )
   const notices = new Map<string, ScmSalesDocument>()
   for (let offset = 0; offset < noticeIds.length; offset += 100) {
     const result = await responseHandle<ScmSalesDocument[]>(
@@ -1116,13 +1170,11 @@ export async function fetchScmLoadingOutboundRows(
     )
     for (const notice of result.data ?? []) notices.set(notice.id, notice)
   }
-  const orderIds = [
-    ...new Set(
-      [...notices.values()].flatMap((notice) =>
-        notice.lines.flatMap((line) => (line.sourceDocumentId ? [line.sourceDocumentId] : []))
-      )
+  const orderIds = uniq(
+    [...notices.values()].flatMap((notice) =>
+      notice.lines.flatMap((line) => (line.sourceDocumentId ? [line.sourceDocumentId] : []))
     )
-  ]
+  )
   const orders = new Map<string, ScmSalesDocument>()
   for (let offset = 0; offset < orderIds.length; offset += 100) {
     const result = await responseHandle<ScmSalesDocument[]>(
@@ -1147,16 +1199,12 @@ export async function fetchScmLoadingOutboundRows(
         const orderLine = orders
           .get(noticeLine?.sourceDocumentId ?? '')
           ?.lines.find((item) => item.lineId === noticeLine?.sourceLineId)
-        const rowAllocations = allocations.filter(
-          (allocation) =>
-            allocation.loadingId === document.id && allocation.loadingLineId === line.lineId
-        )
+        const rowAllocations = allocationsByLine[`${document.id}:${line.lineId}`] ?? []
         const usedBatches = rowAllocations.flatMap((allocation) => {
           const batch = batches.get(allocation.batchId)
           return batch ? [batch] : []
         })
-        const joinedLocations = (values: string[]) =>
-          [...new Set(values.filter(Boolean))].join('、')
+        const joinedLocations = (values: string[]) => uniq(values.filter(Boolean)).join('、')
         return {
           id: `${document.id}:${line.lineId}`,
           tenantId: document.tenantId,

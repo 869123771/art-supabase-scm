@@ -645,12 +645,9 @@
     :show-pagination="false"
     reset-draft-on-open
     dialog-width="xl"
-    :empty-text="receiptSourceLoading ? '正在加载可参选明细…' : '暂无可参选的采购订单明细'"
-    :empty-description="
-      receiptSourceLoading
-        ? '正在查询当前供应商的采购订单剩余数量。'
-        : '请先确认供应商，再检查采购订单的审核状态与剩余交货数量。'
-    "
+    :loading="receiptSourceLoading"
+    empty-text="暂无可参选的采购订单明细"
+    empty-description="请先确认供应商，再检查采购订单的审核状态与剩余交货数量。"
     @confirm="confirmReceiptOrderLines"
   >
     <template #trigger><span class="sr-only">参选采购订单</span></template>
@@ -2087,6 +2084,7 @@
   const headerRules = computed<FormRules<HeaderModel>>(() => ({
     tenantId: [{ required: true, message: '请选择所属租户', trigger: 'change' }],
     documentNo: [],
+    documentTypeId: [{ required: true, message: '请选择单据类型', trigger: 'change' }],
     projectId: [{ required: true, message: '请选择项目', trigger: 'change' }],
     documentDate: [{ required: true, message: '请选择单据日期', trigger: 'change' }]
   }))
@@ -2135,14 +2133,16 @@
       type: 'select',
       props: {
         options: documentTypes.value
-          .filter((item) => item.menuId === menuIds.value[kind.value])
+          .filter((item) => item.menuIds.includes(menuIds.value[kind.value]))
           .map((item) => ({ label: item.documentTypeName, value: item.id })),
         filterable: true,
         clearable: true,
         loading: loading.value,
-        placeholder: documentTypes.value.some((item) => item.menuId === menuIds.value[kind.value])
+        placeholder: documentTypes.value.some((item) =>
+          item.menuIds.includes(menuIds.value[kind.value])
+        )
           ? '按 MDM 单据类型配置参选'
-          : '当前租户尚未配置该单据类型（可留空）'
+          : '请先在 MDM 单据类型中配置当前功能的类型'
       }
     },
     {
@@ -2416,6 +2416,12 @@
           item.id
         ])
       )
+      const availableTypes = documentTypes.value.filter((item) =>
+        item.menuIds.includes(menuIds.value[kind.value])
+      )
+      if (!recordId.value && !availableTypes.some((item) => item.id === header.documentTypeId)) {
+        header.documentTypeId = availableTypes.find((item) => item.isDefault)?.id ?? ''
+      }
       referencesLoaded.value = true
       return true
     } catch {
@@ -3538,6 +3544,7 @@
     (tenantId, previous) => {
       if (preparing || tenantId === previous) return
       header.projectId = ''
+      header.documentTypeId = ''
       header.supplierId = ''
       header.sourceId = ''
       lines.value = []

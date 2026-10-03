@@ -9,10 +9,15 @@
       >
         <template #aside>
           <div class="text-right">
-            <div class="text-xs text-[var(--art-gray-600)]">单据总价</div>
+            <div class="text-xs text-[var(--art-gray-600)]">{{
+              record.kind === 'sales_quotation' ? '不含税总价' : '单据总价'
+            }}</div>
             <strong class="text-lg text-[var(--el-color-primary)]">{{
               formatCurrencyValue(record.totalAmount)
             }}</strong>
+            <div v-if="record.kind === 'sales_quotation'" class="text-xs text-[var(--art-gray-600)]"
+              >含税总价 {{ formatCurrencyValue(quotationTaxInclusiveTotal) }}</div
+            >
           </div>
         </template>
       </ArtEntitySummary>
@@ -178,7 +183,7 @@
   import { storeToRefs } from 'pinia'
   import { fetchQuoteExpenses, fetchScmSalesDocument, type ScmSalesDocument } from '@scm/api'
   import { scmDocumentConfigs } from '../document-config'
-  import { calculateContractLine } from '../quotation-pricing'
+  import { calculateContractLine, calculateQuotationLine } from '../quotation-pricing'
 
   defineOptions({ name: 'ScmDocumentDetailDrawer' })
 
@@ -214,6 +219,9 @@
     updatedAt: ''
   })
   const config = computed(() => scmDocumentConfigs[record.value.kind])
+  const quotationTaxInclusiveTotal = computed(() =>
+    record.value.lines.reduce((sum, line) => sum + calculateQuotationLine(line).total, 0)
+  )
   const { getDictMap } = storeToRefs(useUserStore())
   const feeNames = ref(new Map<string, string>())
   const clauseLabel = (value: string): string =>

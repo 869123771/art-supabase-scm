@@ -522,7 +522,10 @@
         <span class="text-[var(--art-gray-600)]">保存时由数据库重新核算</span>
         <div v-if="kind === 'sales_quotation'" class="flex flex-wrap gap-x-5 gap-y-1 tabular-nums">
           <span
-            >总价 <strong>{{ formatCurrencyValue(previewTotal) }}</strong></span
+            >不含税总价 <strong>{{ formatCurrencyValue(previewTotal) }}</strong></span
+          >
+          <span
+            >含税总价 <strong>{{ formatCurrencyValue(previewTaxInclusiveTotal) }}</strong></span
           >
           <span
             >成本总价 <strong>{{ formatCurrencyValue(previewCostTotal) }}</strong></span
@@ -892,6 +895,9 @@
       ? details.contractTotalAmount
       : contractCalculatedTotal.value
   )
+  const previewTaxInclusiveTotal = computed(() =>
+    lines.value.reduce((sum, line) => sum + calculateQuotationLine(line).total, 0)
+  )
   const previewCostTotal = computed(
     () =>
       lines.value.reduce((sum, line) => sum + line.quantity * Number(line.costUnitPrice || 0), 0) +
@@ -931,9 +937,7 @@
       }
     ],
     customerId: [{ required: true, message: '请选择客户', trigger: 'change' }],
-    ...(['sales_quotation', 'sales_order', 'shipping_notice', 'loading'].includes(kind.value)
-      ? { documentTypeId: [{ required: true, message: '请选择单据类型', trigger: 'change' }] }
-      : {}),
+    documentTypeId: [{ required: true, message: '请选择单据类型', trigger: 'change' }],
     documentDate: [{ required: true, message: '请选择单据日期', trigger: 'change' }]
   }))
 
@@ -2251,6 +2255,7 @@
     (tenantId, previous) => {
       if (preparing || tenantId === previous) return
       header.projectId = ''
+      header.documentTypeId = ''
       header.customerId = ''
       header.sourceId = ''
       details.salespersonId = undefined

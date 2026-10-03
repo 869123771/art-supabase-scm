@@ -3,6 +3,7 @@ import { omit } from 'lodash-es'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
 import { fetchAllRangePages } from '@/utils/supabase'
 import { buildOrIlikeFilter } from '@/utils/supabase/search'
+import { toScmPurchaseLinePayload } from './purchase-line-payload'
 import type {
   ScmPurchaseDocument,
   ScmPurchaseKind,
@@ -146,55 +147,70 @@ const documentSelect =
   '*,project:mdm_project!scm_purchase_document_project_id_fkey(project_code,project_name),document_type:mdm_document_type!scm_purchase_document_document_type_id_fkey(document_type_name)'
 
 export async function fetchScmPurchaseProjectOptions(tenantId: string) {
-  const { data } = await responseHandle<ScmPurchaseProjectOption[]>(
-    () =>
-      supabase
-        .from('mdm_project')
-        .select(
-          'id,tenant_id,project_code,project_name,customer_id,project_status,customer:mdm_customer!mdm_project_customer_tenant_fk(customer_name),salesperson:mdm_employee!mdm_project_sales_tenant_fk(employee_name),owner:mdm_employee!mdm_project_owner_tenant_fk(employee_name)'
-        )
-        .eq('tenant_id', tenantId)
-        .eq('enabled', true)
-        .order('project_name')
-        .range(0, 999),
-    { breakReturn: true, showErrorMessage: true, errorMessage: '项目参选数据加载失败，请稍后重试' }
+  const { data, error } = await fetchAllRangePages<ScmPurchaseProjectOption>(({ from, to }) =>
+    responseHandle<ScmPurchaseProjectOption[]>(
+      () =>
+        supabase
+          .from('mdm_project')
+          .select(
+            'id,tenant_id,project_code,project_name,customer_id,project_status,customer:mdm_customer!mdm_project_customer_tenant_fk(customer_name),salesperson:mdm_employee!mdm_project_sales_tenant_fk(employee_name),owner:mdm_employee!mdm_project_owner_tenant_fk(employee_name)'
+          )
+          .eq('tenant_id', tenantId)
+          .eq('enabled', true)
+          .order('project_name')
+          .order('id')
+          .range(from, to),
+      {
+        breakReturn: true,
+        showErrorMessage: true,
+        errorMessage: '项目参选数据加载失败，请稍后重试'
+      }
+    )
   )
+  if (error) throw error
   return data ?? []
 }
 
 export async function fetchScmProjectSections(tenantId: string) {
-  const { data } = await responseHandle<
-    Array<{
-      id: string
-      projectId: string
-      constructionNo: string
-      sectionName: string
-      status: 'active' | 'closed'
-    }>
-  >(
-    () =>
-      supabase
-        .from('mdm_project_construction')
-        .select('id,project_id,construction_no,section_name,status')
-        .eq('tenant_id', tenantId)
-        .order('construction_no'),
-    { breakReturn: true, showErrorMessage: true, errorMessage: '项目施工号加载失败，请稍后重试' }
+  const { data, error } = await fetchAllRangePages<{
+    id: string
+    projectId: string
+    constructionNo: string
+    sectionName: string
+    status: 'active' | 'closed'
+  }>(({ from, to }) =>
+    responseHandle(
+      () =>
+        supabase
+          .from('mdm_project_construction')
+          .select('id,project_id,construction_no,section_name,status')
+          .eq('tenant_id', tenantId)
+          .order('construction_no')
+          .order('id')
+          .range(from, to),
+      { breakReturn: true, showErrorMessage: true, errorMessage: '项目施工号加载失败，请稍后重试' }
+    )
   )
+  if (error) throw error
   return data ?? []
 }
 
 export async function fetchScmPurchaseMaterialCategories(tenantId: string) {
-  const { data } = await responseHandle<ScmPurchaseMaterialCategory[]>(
-    () =>
-      supabase
-        .from('mdm_material_category')
-        .select('id,tenant_id,parent_id,category_code,category_name')
-        .eq('tenant_id', tenantId)
-        .order('sort')
-        .order('category_code')
-        .range(0, 999),
-    { breakReturn: true, showErrorMessage: true, errorMessage: '物料分类加载失败，请稍后重试' }
+  const { data, error } = await fetchAllRangePages<ScmPurchaseMaterialCategory>(({ from, to }) =>
+    responseHandle<ScmPurchaseMaterialCategory[]>(
+      () =>
+        supabase
+          .from('mdm_material_category')
+          .select('id,tenant_id,parent_id,category_code,category_name')
+          .eq('tenant_id', tenantId)
+          .order('sort')
+          .order('category_code')
+          .order('id')
+          .range(from, to),
+      { breakReturn: true, showErrorMessage: true, errorMessage: '物料分类加载失败，请稍后重试' }
+    )
   )
+  if (error) throw error
   return data ?? []
 }
 
@@ -228,32 +244,40 @@ export async function fetchScmPurchaseMaterialCandidates(
 }
 
 export async function fetchScmPurchaseWarehouseOptions(tenantId: string) {
-  const { data } = await responseHandle<ScmPurchaseWarehouseOption[]>(
-    () =>
-      supabase
-        .from('mdm_warehouse')
-        .select('id,warehouse_code,warehouse_name,enable_locations')
-        .eq('tenant_id', tenantId)
-        .eq('status', 'enabled')
-        .order('warehouse_code')
-        .range(0, 999),
-    { breakReturn: true, showErrorMessage: true, errorMessage: '仓库加载失败，请稍后重试' }
+  const { data, error } = await fetchAllRangePages<ScmPurchaseWarehouseOption>(({ from, to }) =>
+    responseHandle<ScmPurchaseWarehouseOption[]>(
+      () =>
+        supabase
+          .from('mdm_warehouse')
+          .select('id,warehouse_code,warehouse_name,enable_locations')
+          .eq('tenant_id', tenantId)
+          .eq('status', 'enabled')
+          .order('warehouse_code')
+          .order('id')
+          .range(from, to),
+      { breakReturn: true, showErrorMessage: true, errorMessage: '仓库加载失败，请稍后重试' }
+    )
   )
+  if (error) throw error
   return data ?? []
 }
 
 export async function fetchScmPurchaseBinOptions(tenantId: string) {
-  const { data } = await responseHandle<ScmPurchaseBinOption[]>(
-    () =>
-      supabase
-        .from('mdm_warehouse_bin')
-        .select('id,warehouse_id,bin_code,bin_name,supports_serial')
-        .eq('tenant_id', tenantId)
-        .eq('status', 'available')
-        .order('bin_code')
-        .range(0, 999),
-    { breakReturn: true, showErrorMessage: true, errorMessage: '仓位加载失败，请稍后重试' }
+  const { data, error } = await fetchAllRangePages<ScmPurchaseBinOption>(({ from, to }) =>
+    responseHandle<ScmPurchaseBinOption[]>(
+      () =>
+        supabase
+          .from('mdm_warehouse_bin')
+          .select('id,warehouse_id,bin_code,bin_name,supports_serial')
+          .eq('tenant_id', tenantId)
+          .eq('status', 'available')
+          .order('bin_code')
+          .order('id')
+          .range(from, to),
+      { breakReturn: true, showErrorMessage: true, errorMessage: '仓位加载失败，请稍后重试' }
+    )
   )
+  if (error) throw error
   return data ?? []
 }
 
@@ -291,17 +315,21 @@ export async function fetchScmPurchaseBinOption(tenantId: string, binId: string)
 }
 
 export async function fetchScmPurchaseCustomerOptions(tenantId: string) {
-  const { data } = await responseHandle<ScmPurchaseCustomerOption[]>(
-    () =>
-      supabase
-        .from('mdm_customer')
-        .select('id,customer_code,customer_name')
-        .eq('tenant_id', tenantId)
-        .eq('enabled', true)
-        .order('customer_code')
-        .range(0, 999),
-    { breakReturn: true, showErrorMessage: true, errorMessage: '客户加载失败，请稍后重试' }
+  const { data, error } = await fetchAllRangePages<ScmPurchaseCustomerOption>(({ from, to }) =>
+    responseHandle<ScmPurchaseCustomerOption[]>(
+      () =>
+        supabase
+          .from('mdm_customer')
+          .select('id,customer_code,customer_name')
+          .eq('tenant_id', tenantId)
+          .eq('enabled', true)
+          .order('customer_code')
+          .order('id')
+          .range(from, to),
+      { breakReturn: true, showErrorMessage: true, errorMessage: '客户加载失败，请稍后重试' }
+    )
   )
+  if (error) throw error
   return data ?? []
 }
 
@@ -613,9 +641,7 @@ function payload(input: ScmPurchaseWrite) {
     documentDate: input.documentDate,
     deliveryDate: input.deliveryDate,
     details: input.details,
-    lines: input.lines.map((line) =>
-      omit(line, ['purchasedQuantity', 'receivedQuantity', 'remainingQuantity'])
-    ),
+    lines: input.lines.map(toScmPurchaseLinePayload),
     paymentPlans: input.paymentPlans,
     deliveryPlans: input.deliveryPlans.map((plan) =>
       omit(plan, ['remainingQuantity', 'recentDeliveryDate'])

@@ -12,7 +12,9 @@
           { label: '单据流转', type: 'info' }
         ]"
       >
-        <template #actions><BusinessTableWorkspaceActions :table="tableRef" /></template>
+        <template #actions>
+          <BusinessTableWorkspaceActions :table="tableRef" />
+        </template>
       </BusinessWorkspaceHeader>
       <ArtTableQuery
         ref="tableRef"
@@ -25,15 +27,28 @@
         header-actions-placement="workspace"
         :search-bar-props="{ span: 6, labelWidth: 82, showExpand: true }"
         :table-props="{
-          rowKey: 'id',
+          rowKey: displayMode === 'line' ? 'detailRowId' : 'id',
+          spanMethod: mergeDocumentCells,
           tableLayout: 'fixed',
           emptyText: `暂无${config.title}`,
-          emptyDescription: effectiveTenantId
-            ? `当前租户暂无${config.title}。可新建单据，或在页头切换到其他业务租户。`
-            : `暂无${config.title}。创建单据后可继续维护物料与状态。`
+          emptyDescription:
+            isPlatformSuper && effectiveTenantId
+              ? `当前租户暂无${config.title}。可新建单据，或在页头切换到其他业务租户。`
+              : `暂无${config.title}。创建单据后可继续维护物料与状态。`
         }"
         focusable
-      />
+      >
+        <template #search-displayMode>
+          <ElRadioGroup
+            v-model="displayMode"
+            aria-label="单据列表展示方式"
+            @change="onDisplayModeChange"
+          >
+            <ElRadioButton label="document" value="document">按单据</ElRadioButton>
+            <ElRadioButton label="line" value="line">按明细</ElRadioButton>
+          </ElRadioGroup>
+        </template>
+      </ArtTableQuery>
       <PurchaseDialog ref="dialogRef" @success="handleSaved" />
       <PurchaseDetailDrawer ref="drawerRef" />
       <ArtTableMultipleSelect
@@ -52,12 +67,9 @@
         "
         :show-pagination="false"
         reset-draft-on-open
-        :empty-text="pushChoicesLoading ? '正在加载可下推明细…' : '暂无可下推明细'"
-        :empty-description="
-          pushChoicesLoading
-            ? '正在核对单据状态和剩余可下推数量。'
-            : '此通知单的明细已经全部下推到该目标。'
-        "
+        :loading="pushChoicesLoading"
+        empty-text="暂无可下推明细"
+        empty-description="此通知单的明细已经全部下推到该目标。"
         dialog-width="xl"
         @confirm="handlePushConfirm"
       >
@@ -101,6 +113,12 @@
   import type { ColumnOption } from '@/types'
   import { formatCurrencyValue } from '@/utils/ui/format'
   import {
+    documentGroupSpan,
+    expandDocumentLines,
+    loadAllDocumentPages,
+    paginateDetailRows
+  } from '@/utils/business/document-detail-list'
+  import {
     deleteScmPurchaseDocument,
     createScmPurchaseDocument,
     fetchScmMaterialOptions,
@@ -126,6 +144,29 @@
 
   defineOptions({ name: 'ScmPurchaseWorkspace' })
   const props = defineProps<{ kind: ScmPurchaseKind }>()
+  const displayMode = ref<'document' | 'line'>('document')
+  const visibleRows = ref<PurchaseListRow[]>([])
+  const lineProperties = new Set([
+    'detailLine.lineNo',
+    'detailLine.materialCode',
+    'materialDescription',
+    'detailLine.specification',
+    'detailLine.quantity',
+    'detailLine.unit',
+    'detailLine.unitPrice',
+    'detailLine.taxRate'
+  ])
+  function mergeDocumentCells({
+    rowIndex,
+    column
+  }: {
+    rowIndex: number
+    column: { property?: string }
+  }) {
+    return displayMode.value === 'line'
+      ? documentGroupSpan(visibleRows.value, rowIndex, column.property, lineProperties)
+      : ([1, 1] as [number, number])
+  }
   const config = computed(() => purchaseConfigs[props.kind])
   const { confirmAction } = useArtFeedback()
   const { hasAuth } = useAuth()
@@ -192,6 +233,19 @@
     { prop: 'warehouse', label: '仓库', minWidth: 120 }
   ])
   const search = ref<ScmPurchaseQuery>({ keyword: '' })
+  type PurchaseListRow = ScmPurchaseDocument & {
+    detailRowId?: string
+    detailLine?: ScmPurchaseLine
+    detailGroupStart?: boolean
+  }
+  function groupValue(row: PurchaseListRow, value: string): string {
+    return row.detailLine && row.detailGroupStart === false ? '' : value
+  }
+  async function onDisplayModeChange(): Promise<void> {
+    tableRef.value?.clearSelection()
+    tableRef.value?.resetColumns()
+    await tableRef.value?.refreshContext()
+  }
   const importTenantId = computed(
     () => effectiveTenantId.value || search.value.tenantId || defaultWriteTenantId.value || ''
   )
@@ -246,6 +300,7 @@
   })
 
   const searchItems = computed<SearchFormItem[]>(() => [
+    { label: '展示方式', key: 'displayMode', type: 'text' },
     ...(isPlatformSuper.value && !effectiveTenantId.value
       ? [
           {
@@ -334,6 +389,17 @@
       exportSheetName: config.value.title,
       exportColumns: [
         { key: 'documentNo', title: config.value.numberLabel },
+        ...(displayMode.value === 'line'
+          ? [
+              { key: 'lineNo', title: '明细行号' },
+              { key: 'materialCode', title: '物料编码' },
+              { key: 'materialDescription', title: '物料描述' },
+              { key: 'quantity', title: '数量' },
+              { key: 'unit', title: '单位' },
+              { key: 'unitPrice', title: '未税单价' },
+              { key: 'taxRate', title: '税率(%)' }
+            ]
+          : []),
         { key: 'projectName', title: '项目名称' },
         { key: 'projectCode', title: '项目编码' },
         { key: 'supplierName', title: '供应商全称' },
@@ -349,76 +415,78 @@
   ])
 
   const selectionActions = computed<ArtTableQueryHeaderAction[]>(() =>
-    props.kind === 'purchase_request'
-      ? [
-          {
-            permission: config.value.permissions.Push,
-            key: 'push-purchase-order',
-            label: '下推采购订单',
-            icon: 'ri:arrow-right-line',
-            selectionRequired: true,
-            disabled: (ctx) => ctx.selectedRows.length !== 1 || !hasAuth('ScmPurchaseOrder:Add'),
-            onClick: (ctx) => void pushRequest(String(ctx.selectedRows[0]?.id ?? ''))
-          }
-        ]
-      : props.kind === 'purchase_order'
+    displayMode.value === 'line'
+      ? []
+      : props.kind === 'purchase_request'
         ? [
             {
               permission: config.value.permissions.Push,
-              key: 'push-receipt-notice',
-              label: '下推收料通知单',
-              icon: 'ri:inbox-line',
-              selectionRequired: true,
-              disabled: (ctx) =>
-                ctx.selectedRows.length !== 1 ||
-                !['approved', 'completed'].includes(String(ctx.selectedRows[0]?.status)) ||
-                !hasAuth('ScmReceiptNotice:Add'),
-              onClick: (ctx) => void pushOrderToReceipt(String(ctx.selectedRows[0]?.id ?? ''))
-            },
-            ...orderPushTargets.map((target): ArtTableQueryHeaderAction => ({
-              permission: config.value.permissions.Push,
-              key: `push-${target.kind}`,
-              label: target.label,
+              key: 'push-purchase-order',
+              label: '下推采购订单',
               icon: 'ri:arrow-right-line',
               selectionRequired: true,
-              disabled: (ctx) =>
-                ctx.selectedRows.length !== 1 ||
-                !['approved', 'completed'].includes(String(ctx.selectedRows[0]?.status)) ||
-                !hasAuth(target.permission),
-              onClick: (ctx) =>
-                void openPushOrderLines(String(ctx.selectedRows[0]?.id ?? ''), target.kind)
-            }))
+              disabled: (ctx) => ctx.selectedRows.length !== 1 || !hasAuth('ScmPurchaseOrder:Add'),
+              onClick: (ctx) => void pushRequest(String(ctx.selectedRows[0]?.id ?? ''))
+            }
           ]
-        : props.kind === 'receipt_notice'
+        : props.kind === 'purchase_order'
           ? [
               {
                 permission: config.value.permissions.Push,
-                key: 'push-inbound',
-                label: '下推收料入库',
+                key: 'push-receipt-notice',
+                label: '下推收料通知单',
                 icon: 'ri:inbox-line',
                 selectionRequired: true,
                 disabled: (ctx) =>
                   ctx.selectedRows.length !== 1 ||
-                  ctx.selectedRows[0]?.status !== 'completed' ||
-                  !hasAuth('WmsReceiptInbound:Add'),
-                onClick: (ctx) =>
-                  void openPushLines(String(ctx.selectedRows[0]?.id ?? ''), 'inbound')
+                  !['approved', 'completed'].includes(String(ctx.selectedRows[0]?.status)) ||
+                  !hasAuth('ScmReceiptNotice:Add'),
+                onClick: (ctx) => void pushOrderToReceipt(String(ctx.selectedRows[0]?.id ?? ''))
               },
-              {
+              ...orderPushTargets.map((target): ArtTableQueryHeaderAction => ({
                 permission: config.value.permissions.Push,
-                key: 'push-asset-payable',
-                label: '下推资产应付',
-                icon: 'ri:bill-line',
+                key: `push-${target.kind}`,
+                label: target.label,
+                icon: 'ri:arrow-right-line',
                 selectionRequired: true,
                 disabled: (ctx) =>
                   ctx.selectedRows.length !== 1 ||
-                  ctx.selectedRows[0]?.status !== 'completed' ||
-                  !hasAuth('FinanceAssetPayable:Add'),
+                  !['approved', 'completed'].includes(String(ctx.selectedRows[0]?.status)) ||
+                  !hasAuth(target.permission),
                 onClick: (ctx) =>
-                  void openPushLines(String(ctx.selectedRows[0]?.id ?? ''), 'asset_payable')
-              }
+                  void openPushOrderLines(String(ctx.selectedRows[0]?.id ?? ''), target.kind)
+              }))
             ]
-          : []
+          : props.kind === 'receipt_notice'
+            ? [
+                {
+                  permission: config.value.permissions.Push,
+                  key: 'push-inbound',
+                  label: '下推收料入库',
+                  icon: 'ri:inbox-line',
+                  selectionRequired: true,
+                  disabled: (ctx) =>
+                    ctx.selectedRows.length !== 1 ||
+                    ctx.selectedRows[0]?.status !== 'completed' ||
+                    !hasAuth('WmsReceiptInbound:Add'),
+                  onClick: (ctx) =>
+                    void openPushLines(String(ctx.selectedRows[0]?.id ?? ''), 'inbound')
+                },
+                {
+                  permission: config.value.permissions.Push,
+                  key: 'push-asset-payable',
+                  label: '下推资产应付',
+                  icon: 'ri:bill-line',
+                  selectionRequired: true,
+                  disabled: (ctx) =>
+                    ctx.selectedRows.length !== 1 ||
+                    ctx.selectedRows[0]?.status !== 'completed' ||
+                    !hasAuth('FinanceAssetPayable:Add'),
+                  onClick: (ctx) =>
+                    void openPushLines(String(ctx.selectedRows[0]?.id ?? ''), 'asset_payable')
+                }
+              ]
+            : []
   )
 
   async function openPushOrderLines(id: string, kind: ScmOrderTargetKind) {
@@ -539,10 +607,11 @@
     }
   }
 
-  const columnsFactory = (): ColumnOption<ScmPurchaseDocument>[] => [
-    ...(props.kind === 'purchase_request' ||
-    props.kind === 'purchase_order' ||
-    props.kind === 'receipt_notice'
+  const columnsFactory = (): ColumnOption<PurchaseListRow>[] => [
+    ...(displayMode.value === 'document' &&
+    (props.kind === 'purchase_request' ||
+      props.kind === 'purchase_order' ||
+      props.kind === 'receipt_notice')
       ? [{ type: 'selection' as const, width: 48, fixed: 'left' as const }]
       : []),
     {
@@ -550,34 +619,37 @@
       label: config.value.numberLabel,
       minWidth: 190,
       fixed: 'left',
-      formatter: (row) => (
-        <button
-          type="button"
-          class="max-w-full truncate text-left font-semibold text-[var(--el-color-primary)] hover:underline focus-visible:outline-2"
-          title={row.documentNo}
-          onClick={() => void drawerRef.value?.handleOpen(row)}
-        >
-          {row.documentNo}
-        </button>
-      )
+      formatter: (row) =>
+        row.detailGroupStart === false ? (
+          ''
+        ) : (
+          <button
+            type="button"
+            class="max-w-full truncate text-left font-semibold text-[var(--el-color-primary)] hover:underline focus-visible:outline-2"
+            title={row.documentNo}
+            onClick={() => void drawerRef.value?.handleOpen(row)}
+          >
+            {row.documentNo}
+          </button>
+        )
     },
     {
       prop: 'documentTypeId',
       label: '单据类型',
       minWidth: 130,
-      formatter: (row) => row.documentType?.documentTypeName || '--'
+      formatter: (row) => groupValue(row, row.documentType?.documentTypeName || '--')
     },
     {
       prop: 'projectId',
       label: '项目名称',
       minWidth: 170,
-      formatter: (row) => row.project?.projectName || '--'
+      formatter: (row) => groupValue(row, row.project?.projectName || '--')
     },
     {
       prop: 'projectCode',
       label: '项目编码',
       minWidth: 130,
-      formatter: (row) => row.project?.projectCode || '--'
+      formatter: (row) => groupValue(row, row.project?.projectCode || '--')
     },
     ...(props.kind !== 'purchase_request'
       ? [
@@ -643,18 +715,72 @@
           }
         ]
       : []),
+    ...(displayMode.value === 'line'
+      ? [
+          {
+            prop: 'detailLine.lineNo',
+            label: '明细行号',
+            width: 95,
+            formatter: (row: PurchaseListRow) => row.detailLine?.lineNo ?? '—'
+          },
+          {
+            prop: 'detailLine.materialCode',
+            label: '物料编码',
+            minWidth: 150,
+            formatter: (row: PurchaseListRow) => row.detailLine?.materialCode || '—'
+          }
+        ]
+      : []),
     {
       prop: 'materialDescription',
-      label: '首项物料',
+      label: displayMode.value === 'line' ? '物料描述' : '首项物料',
       minWidth: 180,
-      formatter: (row) => row.lines[0]?.materialDescription || '--'
+      formatter: (row) =>
+        row.detailLine?.materialDescription || row.lines[0]?.materialDescription || '--'
     },
+    ...(displayMode.value === 'line'
+      ? [
+          {
+            prop: 'detailLine.specification',
+            label: '规格型号',
+            minWidth: 140,
+            formatter: (row: PurchaseListRow) => row.detailLine?.specification || '—'
+          },
+          {
+            prop: 'detailLine.quantity',
+            label: '数量',
+            width: 110,
+            align: 'right' as const,
+            formatter: (row: PurchaseListRow) => row.detailLine?.quantity ?? 0
+          },
+          {
+            prop: 'detailLine.unit',
+            label: '单位',
+            width: 90,
+            formatter: (row: PurchaseListRow) => row.detailLine?.unit || '—'
+          },
+          {
+            prop: 'detailLine.unitPrice',
+            label: '未税单价',
+            width: 130,
+            align: 'right' as const,
+            formatter: (row: PurchaseListRow) => formatCurrencyValue(row.detailLine?.unitPrice ?? 0)
+          },
+          {
+            prop: 'detailLine.taxRate',
+            label: '税率',
+            width: 85,
+            align: 'right' as const,
+            formatter: (row: PurchaseListRow) => `${row.detailLine?.taxRate ?? 0}%`
+          }
+        ]
+      : []),
     {
       prop: 'lineCount',
       label: '明细',
       width: 76,
       align: 'right',
-      formatter: (row) => row.lines.length
+      formatter: (row) => (row.detailGroupStart === false ? '' : row.lines.length)
     },
     ...(props.kind === 'purchase_request'
       ? [
@@ -710,11 +836,14 @@
       label: '价税合计',
       width: 150,
       align: 'right',
-      formatter: (row) => (
-        <strong class="font-semibold text-[var(--el-color-primary)]">
-          {formatCurrencyValue(row.totalAmount)}
-        </strong>
-      )
+      formatter: (row) =>
+        row.detailGroupStart === false ? (
+          ''
+        ) : (
+          <strong class="font-semibold text-[var(--el-color-primary)]">
+            {formatCurrencyValue(row.totalAmount)}
+          </strong>
+        )
     },
     { prop: 'remark', label: '备注', minWidth: 180, showOverflowTooltip: true },
     {
@@ -722,31 +851,34 @@
       label: '操作',
       width: 168,
       fixed: 'right',
-      formatter: (row) => (
-        <BusinessTableRowActions>
-          <ArtButtonTable
-            type="view"
-            permission={config.value.permissions.View}
-            onClick={() => void drawerRef.value?.handleOpen(row)}
-          />
-          {row.status === 'draft' && (
+      formatter: (row) =>
+        row.detailGroupStart === false ? (
+          ''
+        ) : (
+          <BusinessTableRowActions>
             <ArtButtonTable
-              type="edit"
-              label={
-                props.kind === 'purchase_request' || props.kind === 'receipt_notice'
-                  ? '编制'
-                  : '编辑'
-              }
-              permission={config.value.permissions.Edit}
-              onClick={() => openDialog(row)}
+              type="view"
+              permission={config.value.permissions.View}
+              onClick={() => void drawerRef.value?.handleOpen(row)}
             />
-          )}
-          <ArtButtonMore
-            list={moreActions(row)}
-            onClick={(item: ButtonMoreItem) => void handleMoreAction(row, String(item.key))}
-          />
-        </BusinessTableRowActions>
-      )
+            {row.status === 'draft' && (
+              <ArtButtonTable
+                type="edit"
+                label={
+                  props.kind === 'purchase_request' || props.kind === 'receipt_notice'
+                    ? '编制'
+                    : '编辑'
+                }
+                permission={config.value.permissions.Edit}
+                onClick={() => openDialog(row)}
+              />
+            )}
+            <ArtButtonMore
+              list={moreActions(row)}
+              onClick={(item: ButtonMoreItem) => void handleMoreAction(row, String(item.key))}
+            />
+          </BusinessTableRowActions>
+        )
     }
   ]
 
@@ -867,17 +999,55 @@
   function handleSaved(mode: 'add' | 'edit') {
     void (mode === 'add' ? tableRef.value?.refreshCreate() : tableRef.value?.refreshUpdate())
   }
-  function fetchPage(query: ScmPurchaseQuery) {
-    return fetchScmPurchaseDocuments(props.kind, query)
+  async function fetchPage(query: ScmPurchaseQuery) {
+    if (displayMode.value === 'document') {
+      visibleRows.value = []
+      return fetchScmPurchaseDocuments(props.kind, query)
+    }
+    const documents = await loadAllDocumentPages(
+      (page: ScmPurchaseQuery) => fetchScmPurchaseDocuments(props.kind, page),
+      query
+    )
+    const rows = expandDocumentLines(
+      documents,
+      (document) => document.lines,
+      (line, index) => line.lineId || String(index)
+    )
+    const result = { ...paginateDetailRows(rows, query.from, query.to), error: null }
+    visibleRows.value = result.data
+    return result
   }
   async function exportDocuments() {
-    const { data } = await fetchScmPurchaseDocuments(props.kind, {
-      ...search.value,
-      from: 0,
-      to: 9999
-    })
-    return (data ?? []).map((row) => ({
+    const documents =
+      displayMode.value === 'line'
+        ? await loadAllDocumentPages(
+            (page: ScmPurchaseQuery) => fetchScmPurchaseDocuments(props.kind, page),
+            search.value
+          )
+        : ((
+            await fetchScmPurchaseDocuments(props.kind, {
+              ...search.value,
+              from: 0,
+              to: 9999
+            })
+          ).data ?? [])
+    const rows: PurchaseListRow[] =
+      displayMode.value === 'line'
+        ? expandDocumentLines(
+            documents,
+            (document) => document.lines,
+            (line, index) => line.lineId || String(index)
+          )
+        : documents
+    return rows.map((row) => ({
       documentNo: row.documentNo,
+      lineNo: row.detailLine?.lineNo,
+      materialCode: row.detailLine?.materialCode,
+      materialDescription: row.detailLine?.materialDescription,
+      quantity: row.detailLine?.quantity,
+      unit: row.detailLine?.unit,
+      unitPrice: row.detailLine?.unitPrice,
+      taxRate: row.detailLine?.taxRate,
       projectName: row.project?.projectName,
       projectCode: row.project?.projectCode,
       supplierName: row.supplier?.supplierName,
