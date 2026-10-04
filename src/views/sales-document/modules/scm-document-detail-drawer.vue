@@ -70,7 +70,7 @@
                 <div
                   ><div class="text-xs text-[var(--art-gray-600)]">数量</div
                   ><div class="mt-1 font-medium tabular-nums"
-                    >{{ line.quantity }} {{ line.salesUnit }}</div
+                    >{{ line.quantity }} {{ unitDisplayName(record.tenantId, line.salesUnit) }}</div
                   ></div
                 >
                 <div
@@ -179,6 +179,7 @@
   import ArtEntitySummary from '@/components/core/surfaces/art-entity-summary/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import { formatCurrencyValue } from '@/utils/ui/format'
+  import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { useUserStore } from '@/store/modules/user'
   import { storeToRefs } from 'pinia'
   import { fetchQuoteExpenses, fetchScmSalesDocument, type ScmSalesDocument } from '@scm/api'
@@ -186,6 +187,7 @@
   import { calculateContractLine, calculateQuotationLine } from '../quotation-pricing'
 
   defineOptions({ name: 'ScmDocumentDetailDrawer' })
+  const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
 
   const drawerRef = ref<ArtDrawerExpose<ScmSalesDocument>>()
   const record = ref<ScmSalesDocument>({
@@ -300,6 +302,7 @@
   )
 
   async function handleOpen(value: ScmSalesDocument): Promise<void> {
+    await loadUnitDisplayNames([value.tenantId])
     record.value = value
     await drawerRef.value?.handleOpen(value, {
       title: `查看${config.value.title}`,

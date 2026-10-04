@@ -83,6 +83,7 @@
   import { ElMessage, ElTag } from 'element-plus'
   import { startWorkflow } from '@/api/workflow'
   import { storeToRefs } from 'pinia'
+  import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { useRouter } from 'vue-router'
   import ArtButtonMore, {
     type ButtonMoreItem
@@ -152,6 +153,7 @@
   import QuotationBomDialog from './modules/quotation-bom-dialog.vue'
 
   defineOptions({ name: 'ScmDocumentWorkspace' })
+  const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
 
   const props = defineProps<{ kind: ScmDocumentKind }>()
   const displayMode = ref<'document' | 'line'>('document')
@@ -669,7 +671,8 @@
             prop: 'detailLine.salesUnit',
             label: '销售单位',
             width: 110,
-            formatter: (row: SalesListRow) => row.detailLine?.salesUnit || '—'
+            formatter: (row: SalesListRow) =>
+              unitDisplayName(row.tenantId, row.detailLine?.salesUnit)
           },
           {
             prop: 'detailLine.unitPrice',
@@ -1234,9 +1237,7 @@
     void (mode === 'add' ? tableRef.value?.refreshCreate() : tableRef.value?.refreshUpdate())
   }
 
-  async function fetchAllQuotationDocuments(
-    query: ScmSalesDocumentQuery
-  ): Promise<ScmSalesDocument[]> {
+  async function fetchAllDocuments(query: ScmSalesDocumentQuery): Promise<ScmSalesDocument[]> {
     return loadAllDocumentPages((page) => fetchScmSalesDocuments(props.kind, page), query)
   }
 
@@ -1253,12 +1254,10 @@
       visibleRows.value = []
       return fetchScmSalesDocuments(props.kind, query)
     }
+    const documents = await fetchAllDocuments(query)
+    await loadUnitDisplayNames(documents.map((document) => document.tenantId))
     const result = {
-      ...paginateDetailRows(
-        expandQuotationLines(await fetchAllQuotationDocuments(query)),
-        query.from,
-        query.to
-      ),
+      ...paginateDetailRows(expandQuotationLines(documents), query.from, query.to),
       error: null
     }
     visibleRows.value = result.data
@@ -1266,20 +1265,20 @@
   }
 
   async function exportDocuments(): Promise<Array<Record<string, unknown>>> {
-    const documents =
-      displayMode.value === 'line'
-        ? await fetchAllQuotationDocuments(search.value)
-        : ((await fetchScmSalesDocuments(props.kind, { ...search.value, from: 0, to: 9999 }))
-            .data ?? [])
+    const documents = await fetchAllDocuments(search.value)
     const rows: SalesListRow[] =
       displayMode.value === 'line' ? expandQuotationLines(documents) : documents
+    if (displayMode.value === 'line')
+      await loadUnitDisplayNames(documents.map((document) => document.tenantId))
     return rows.map((row) => ({
       documentNo: row.documentNo,
       lineNo: row.detailLine?.lineNo,
       materialCode: row.detailLine?.materialCode,
       materialDescription: row.detailLine?.materialDescription,
       quantity: row.detailLine?.quantity,
-      salesUnit: row.detailLine?.salesUnit,
+      salesUnit: row.detailLine
+        ? unitDisplayName(row.tenantId, row.detailLine.salesUnit)
+        : undefined,
       unitPrice: row.detailLine?.unitPrice,
       taxRate: row.detailLine?.taxRate,
       quotationScene: row.details.quotationScene === 'project' ? '工程' : '标准',

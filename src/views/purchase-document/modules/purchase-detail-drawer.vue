@@ -60,7 +60,7 @@
                     v-if="record.kind === 'purchase_contract' && line.baseUnit"
                     class="mt-1 text-xs text-[var(--art-gray-600)]"
                   >
-                    基本单位 {{ line.baseUnit }}
+                    基本单位 {{ unitDisplayName(record.tenantId, line.baseUnit) }}
                   </div>
                   <div
                     v-if="
@@ -111,7 +111,7 @@
                 <div
                   ><div class="text-xs text-[var(--art-gray-600)]">数量</div
                   ><div class="mt-1 font-medium tabular-nums"
-                    >{{ line.quantity }} {{ line.unit }}</div
+                    >{{ line.quantity }} {{ unitDisplayName(record.tenantId, line.unit) }}</div
                   ></div
                 >
                 <div
@@ -207,6 +207,7 @@
   import ArtEntitySummary from '@/components/core/surfaces/art-entity-summary/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import { formatCurrencyValue } from '@/utils/ui/format'
+  import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { useUserStore } from '@/store/modules/user'
   import { storeToRefs } from 'pinia'
   import {
@@ -218,6 +219,7 @@
   import { purchaseConfigs } from '../purchase-config'
 
   defineOptions({ name: 'ScmPurchaseDetailDrawer' })
+  const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
   const drawerRef = ref<ArtDrawerExpose<ScmPurchaseDocument>>()
   const record = ref<ScmPurchaseDocument>({
     id: '',
@@ -310,6 +312,7 @@
     }))
   )
   async function handleOpen(value: ScmPurchaseDocument) {
+    await loadUnitDisplayNames([value.tenantId])
     record.value = value
     await drawerRef.value?.handleOpen(value, {
       title: `查看${config.value.title}`,

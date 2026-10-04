@@ -1,1 +1,0 @@
-import{Mi as e,Xi as t,wi as n}from"./sys-CbUO9eSQ.js";import{t as r}from"./purchase-workspace-PKgJeFvg.js";var i=e({name:`ScmPurchaseRequest`,__name:`index`,setup(e){return(e,i)=>(t(),n(r,{kind:`purchase_request`}))}});export{i as default};

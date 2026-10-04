@@ -622,7 +622,8 @@
             <span class="text-xs text-[var(--art-gray-600)]">
               {{ line.sourceDocumentNo
               }}<span v-if="line.sourceLineNo"> · 第 {{ line.sourceLineNo }} 行</span> ·
-              {{ line.materialCode }} · 可转换 {{ line.quantity }} {{ line.unit }}
+              {{ line.materialCode }} · 可转换 {{ line.quantity }}
+              {{ unitDisplayName(header.tenantId, line.unit) }}
               <span v-if="line.projectName"> · {{ line.projectName }}</span>
               <span v-if="line.needDate"> · 需求 {{ line.needDate }}</span>
             </span>
@@ -655,6 +656,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { validateArtFormForSubmit } from '@/utils/form/validate-art-form'
   import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
   import dayjs from 'dayjs'
@@ -763,6 +765,7 @@
   }
 
   defineOptions({ name: 'ScmPurchaseDialog' })
+  const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
   const emit = defineEmits<{ success: [mode: 'add' | 'edit'] }>()
   const userStore = useUserStore()
   const { hasAuth } = useAuth()
@@ -1006,7 +1009,12 @@
     { prop: 'materialCode', label: '物料编码', minWidth: 125 },
     { prop: 'materialDescription', label: '物料名称', minWidth: 190 },
     { prop: 'quantity', label: '未交数量', minWidth: 105 },
-    { prop: 'unit', label: '单位', width: 80 }
+    {
+      prop: 'unit',
+      label: '单位',
+      width: 80,
+      formatter: (row) => unitDisplayName(header.tenantId, row.unit)
+    }
   ]
   const supplierPickerLabel = (row: { supplierCode?: string; supplierName?: string }): string =>
     `${row.supplierName || '未命名供应商'}（${row.supplierCode || '无编码'}）`
@@ -1293,7 +1301,12 @@
         />
       )
     },
-    { prop: 'unit', label: '采购单位', width: 100, formatter: (row) => row.unit || '—' },
+    {
+      prop: 'unit',
+      label: '采购单位',
+      width: 100,
+      formatter: (row) => unitDisplayName(header.tenantId, row.unit)
+    },
     {
       prop: 'quantity',
       label: '计划交货数量',
@@ -1723,7 +1736,8 @@
       width: 110,
       formatter: (row) => (
         <ElInput
-          v-model={row.unit}
+          modelValue={row.unit ? unitDisplayName(header.tenantId, row.unit) : ''}
+          onUpdate:modelValue={(value: string) => (row.unit = value)}
           maxlength={30}
           placeholder="计量单位"
           disabled={kind.value === 'purchase_request'}
@@ -1737,7 +1751,7 @@
             prop: 'stockUnit',
             label: '库存单位',
             width: 110,
-            formatter: (row: ScmPurchaseLine) => row.stockUnit || '—'
+            formatter: (row: ScmPurchaseLine) => unitDisplayName(header.tenantId, row.stockUnit)
           },
           {
             prop: 'baseQuantity',
@@ -1758,7 +1772,8 @@
             width: 120,
             formatter: (row: ScmPurchaseLine) => (
               <ElInput
-                v-model={row.baseUnit}
+                modelValue={row.baseUnit ? unitDisplayName(header.tenantId, row.baseUnit) : ''}
+                onUpdate:modelValue={(value: string) => (row.baseUnit = value)}
                 maxlength={30}
                 placeholder="基本单位"
                 aria-label="基本单位"
@@ -2289,6 +2304,7 @@
     if (!tenantId) return true
     loading.value = true
     try {
+      await loadUnitDisplayNames([tenantId])
       const [
         projectResult,
         supplierResult,

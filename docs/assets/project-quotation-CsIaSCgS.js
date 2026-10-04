@@ -1,0 +1,1 @@
+import{ji as e,ra as t,zi as n}from"./sys-DdREK04E.js";import{t as r}from"./scm-document-workspace-BH1qJGjD.js";var i=n({name:`ScmProjectQuotation`,__name:`index`,setup(n){return(n,i)=>(t(),e(r,{kind:`project_quotation`}))}});export{i as default};

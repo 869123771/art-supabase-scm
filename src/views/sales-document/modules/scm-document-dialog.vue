@@ -146,6 +146,8 @@
               v-model:lines="lines"
               quotation
               :materials="materialOptions"
+              :display-unit-name="(value) => unitDisplayName(header.tenantId, value)"
+              :units="engineeringReferences.units"
               :disabled="!header.tenantId"
               :source-options="materialSourceOptions"
               :tax-rates="taxRateOptions"
@@ -163,6 +165,7 @@
               contract
               :quotation-documents="quotationDocuments"
               :materials="materialOptions"
+              :display-unit-name="(value) => unitDisplayName(header.tenantId, value)"
               :disabled="!header.tenantId"
               :source-options="materialSourceOptions"
               :tax-rates="taxRateOptions"
@@ -186,6 +189,7 @@
               :document-id="recordId"
               :default-delivery-date="header.deliveryDate"
               :materials="materialOptions"
+              :display-unit-name="(value) => unitDisplayName(header.tenantId, value)"
               :disabled="!header.tenantId"
               :source-options="materialSourceOptions"
               :tax-rates="taxRateOptions"
@@ -225,6 +229,8 @@
                 (kind === 'shipping_notice' && Boolean(header.sourceId))
               "
               :materials="materialOptions"
+              :display-unit-name="(value) => unitDisplayName(header.tenantId, value)"
+              :units="engineeringReferences.units"
               :disabled="!header.tenantId"
               :source-options="materialSourceOptions"
               :tax-rates="taxRateOptions"
@@ -608,6 +614,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { omit } from 'lodash-es'
   import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import dayjs from 'dayjs'
@@ -677,6 +684,7 @@
   import '../quotation-summary-table.css'
 
   defineOptions({ name: 'ScmDocumentDialog' })
+  const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
 
   interface OpenOptions {
     kind: ScmDocumentKind
@@ -1271,6 +1279,7 @@
     if (!tenantId) return
     referencesLoading.value = true
     try {
+      await loadUnitDisplayNames([tenantId])
       const [
         projects,
         customers,

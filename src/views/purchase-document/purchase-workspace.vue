@@ -81,6 +81,7 @@
 
 <script setup lang="tsx">
   import { storeToRefs } from 'pinia'
+  import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import dayjs from 'dayjs'
   import { ElMessage } from 'element-plus'
   import { useRouter } from 'vue-router'
@@ -143,6 +144,7 @@
   import PurchaseDetailDrawer from './modules/purchase-detail-drawer.vue'
 
   defineOptions({ name: 'ScmPurchaseWorkspace' })
+  const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
   const props = defineProps<{ kind: ScmPurchaseKind }>()
   const displayMode = ref<'document' | 'line'>('document')
   const visibleRows = ref<PurchaseListRow[]>([])
@@ -209,12 +211,10 @@
   const pushReceiptId = ref('')
   const pushTargetKind = ref<ScmReceiptTargetKind>('inbound')
   const pushOrderId = ref('')
+  const pushTenantId = ref('')
   const pushOrderTargetKind = ref<ScmOrderTargetKind>('purchase_inbound')
   const orderPushTargets: Array<{ kind: ScmOrderTargetKind; label: string; permission: string }> = [
-    { kind: 'purchase_inbound', label: '下推采购入库', permission: 'ScmPurchaseInbound:Add' },
-    { kind: 'return_request', label: '下推退料申请', permission: 'ScmPurchaseReturnRequest:Add' },
-    { kind: 'outsource_receipt', label: '下推委外收货', permission: 'ScmOutsourceReceipt:Add' },
-    { kind: 'outsource_inbound', label: '下推委外入库', permission: 'ScmOutsourceInbound:Add' }
+    { kind: 'purchase_inbound', label: '下推 WMS 采购入库', permission: 'WmsPurchaseInbound:Add' }
   ]
   const pushLineColumns = computed<DataSelectColumn[]>(() => [
     { prop: 'lineNo', label: '行号', width: 75 },
@@ -228,7 +228,12 @@
     {
       prop: props.kind === 'purchase_order' ? 'unit' : 'stockUnit',
       label: props.kind === 'purchase_order' ? '采购单位' : '库存单位',
-      minWidth: 95
+      minWidth: 95,
+      formatter: (row) =>
+        unitDisplayName(
+          pushTenantId.value,
+          props.kind === 'purchase_order' ? row.unit : row.stockUnit
+        )
     },
     { prop: 'warehouse', label: '仓库', minWidth: 120 }
   ])
@@ -514,6 +519,9 @@
         pushLineSelectRef.value?.close()
         return
       }
+      pushTenantId.value = data.tenantId
+      await loadUnitDisplayNames([data.tenantId])
+      if (revision !== pushLoadRevision) return
       pushLineChoices.value = data.lines.filter((line) => !pushedIds.has(line.lineId))
       if (!pushLineChoices.value.length) {
         ElMessage.warning('所选订单已无可下推到该目标的明细')
@@ -549,6 +557,9 @@
         pushLineSelectRef.value?.close()
         return
       }
+      pushTenantId.value = data.tenantId
+      await loadUnitDisplayNames([data.tenantId])
+      if (revision !== pushLoadRevision) return
       pushLineChoices.value = data.lines.filter((line) => !pushedIds.has(line.lineId))
       if (!pushLineChoices.value.length) {
         ElMessage.warning('所选通知单已无可下推明细')
@@ -577,10 +588,10 @@
         if (
           targetId &&
           pushOrderTargetKind.value === 'purchase_inbound' &&
-          hasAuth('ScmPurchaseInbound:View')
+          hasAuth('WmsPurchaseInbound:View')
         ) {
           await router.push({
-            path: '/scm/purchase-management/purchase-inbound',
+            path: '/wms/inbound-business/purchase-inbound',
             query: { targetId }
           })
         }
@@ -757,7 +768,7 @@
             prop: 'detailLine.unit',
             label: '单位',
             width: 90,
-            formatter: (row: PurchaseListRow) => row.detailLine?.unit || '—'
+            formatter: (row: PurchaseListRow) => unitDisplayName(row.tenantId, row.detailLine?.unit)
           },
           {
             prop: 'detailLine.unitPrice',
@@ -1008,6 +1019,7 @@
       (page: ScmPurchaseQuery) => fetchScmPurchaseDocuments(props.kind, page),
       query
     )
+    await loadUnitDisplayNames(documents.map((document) => document.tenantId))
     const rows = expandDocumentLines(
       documents,
       (document) => document.lines,
@@ -1018,19 +1030,10 @@
     return result
   }
   async function exportDocuments() {
-    const documents =
-      displayMode.value === 'line'
-        ? await loadAllDocumentPages(
-            (page: ScmPurchaseQuery) => fetchScmPurchaseDocuments(props.kind, page),
-            search.value
-          )
-        : ((
-            await fetchScmPurchaseDocuments(props.kind, {
-              ...search.value,
-              from: 0,
-              to: 9999
-            })
-          ).data ?? [])
+    const documents = await loadAllDocumentPages(
+      (page: ScmPurchaseQuery) => fetchScmPurchaseDocuments(props.kind, page),
+      search.value
+    )
     const rows: PurchaseListRow[] =
       displayMode.value === 'line'
         ? expandDocumentLines(
@@ -1039,13 +1042,15 @@
             (line, index) => line.lineId || String(index)
           )
         : documents
+    if (displayMode.value === 'line')
+      await loadUnitDisplayNames(documents.map((document) => document.tenantId))
     return rows.map((row) => ({
       documentNo: row.documentNo,
       lineNo: row.detailLine?.lineNo,
       materialCode: row.detailLine?.materialCode,
       materialDescription: row.detailLine?.materialDescription,
       quantity: row.detailLine?.quantity,
-      unit: row.detailLine?.unit,
+      unit: row.detailLine ? unitDisplayName(row.tenantId, row.detailLine.unit) : undefined,
       unitPrice: row.detailLine?.unitPrice,
       taxRate: row.detailLine?.taxRate,
       projectName: row.project?.projectName,

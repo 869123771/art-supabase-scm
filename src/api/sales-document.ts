@@ -1,3 +1,4 @@
+import { buildSupabaseRpcRange } from '@/utils/supabase'
 import { useSupabase } from '@/hooks'
 import { groupBy, uniq } from 'lodash-es'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
@@ -41,8 +42,7 @@ export async function fetchScmSalespersonOptions(params: EmployeeSelectorContrac
   const result = await responseHandle<{ records?: EmployeeIntegrationItem[]; total?: number }>(
     () =>
       supabase.rpc('scm_list_salesperson_options', {
-        p_from: Math.max(from, 0),
-        p_to: Math.max(to, from),
+        ...buildSupabaseRpcRange(from, to),
         p_tenant_id: tenantId || null,
         p_keyword: normalizeNullableText(keyword)
       }),

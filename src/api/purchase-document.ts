@@ -1,5 +1,5 @@
 import { useSupabase } from '@/hooks'
-import { omit } from 'lodash-es'
+import { omit, uniq } from 'lodash-es'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
 import { fetchAllRangePages } from '@/utils/supabase'
 import { buildOrIlikeFilter } from '@/utils/supabase/search'
@@ -347,7 +347,7 @@ export async function generateScmReceiptBatchNo(materialId: string): Promise<str
 }
 
 async function attachSuppliers(rows: ScmPurchaseDocument[]) {
-  const ids = [...new Set(rows.flatMap((row) => (row.supplierId ? [row.supplierId] : [])))]
+  const ids = uniq(rows.flatMap((row) => (row.supplierId ? [row.supplierId] : [])))
   if (!ids.length) return rows
   const { data } = await responseHandle<ScmSupplierOption[]>(
     () =>
@@ -365,7 +365,7 @@ async function attachSuppliers(rows: ScmPurchaseDocument[]) {
 }
 
 async function attachSources(rows: ScmPurchaseDocument[]) {
-  const ids = [...new Set(rows.flatMap((row) => (row.sourceId ? [row.sourceId] : [])))]
+  const ids = uniq(rows.flatMap((row) => (row.sourceId ? [row.sourceId] : [])))
   if (!ids.length) return rows
   const { data } = await responseHandle<
     Array<Pick<ScmPurchaseDocument, 'id' | 'documentNo' | 'kind'>>
@@ -430,7 +430,7 @@ async function attachRequestQuantities(rows: ScmPurchaseDocument[]) {
   const data = await fetchPurchaseChildren(
     'purchase_order',
     rows.map((row) => row.id),
-    [...new Set(rows.map((row) => row.tenantId))]
+    uniq(rows.map((row) => row.tenantId))
   )
   const used = new Map<string, number>()
   for (const order of data)

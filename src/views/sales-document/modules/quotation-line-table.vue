@@ -130,6 +130,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { formatUnitDisplayName } from '@/utils/business/unit-display'
   import { omit } from 'lodash-es'
   import {
     ElCheckbox,
@@ -172,6 +173,8 @@
   const props = withDefaults(
     defineProps<{
       materials: ScmMaterialOption[]
+      displayUnitName?: (value?: string | null) => string
+      units?: Array<{ id: string; code: string; name: string }>
       disabled: boolean
       quotation?: boolean
       contract?: boolean
@@ -194,6 +197,8 @@
     }>(),
     {
       quotation: false,
+      displayUnitName: formatUnitDisplayName,
+      units: () => [],
       contract: false,
       order: false,
       engineering: false,
@@ -220,7 +225,7 @@
     { prop: 'materialCode', label: '物料编码', minWidth: 150 },
     { prop: 'materialDescription', label: '物料描述', minWidth: 220 },
     { prop: 'specification', label: '规格型号', minWidth: 160 },
-    { prop: 'unit', label: '单位', width: 90 }
+    { prop: 'unit', label: '单位', width: 90, formatter: (row) => props.displayUnitName(row.unit) }
   ]
   const quotationKeyword = ref('')
   const sourcePickerKind = ref<'sales_quotation' | 'sales_contract'>('sales_quotation')
@@ -384,8 +389,12 @@
       line.manufacturer = material.manufacturer ?? ''
       line.materialCategory = material.materialCategory ?? ''
       line.materialType = material.materialType ?? ''
-      line.baseUnit = material.baseUnitName ?? material.unit ?? ''
-      line.salesUnit = material.unit ?? ''
+      line.baseUnit =
+        material.baseUnitName ||
+        props.units.find((unit) => unit.id === material.baseUnitId)?.name ||
+        material.unit ||
+        ''
+      line.salesUnit = material.salesUnit || material.baseUnitName || material.unit || ''
       line.materialSource = material.materialSource ?? ''
       line.auxiliaryUnit = material.auxiliaryUnit ?? ''
       line.auxiliaryUnit2 = material.auxiliaryUnit2 ?? ''
@@ -397,6 +406,20 @@
   function resetDiscount(line: ScmDocumentLine): void {
     if (!line.discountMode || line.discountMode === 'none') line.discountRate = 0
   }
+
+  watch(
+    [() => props.units, () => lines.value],
+    () => {
+      if (!props.quotation) return
+      for (const line of lines.value) {
+        const unit = props.units.find(
+          (item) => item.id === line.baseUnit || item.code === line.baseUnit
+        )
+        if (unit) line.baseUnit = unit.name
+      }
+    },
+    { immediate: true }
+  )
 
   const columns = computed<ColumnOption<ScmDocumentLine>[]>(() => [
     {
@@ -480,7 +503,12 @@
                 </label>
                 <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
                   销售单位
-                  <ElInput v-model={row.salesUnit} maxlength={30} placeholder="单位" />
+                  <ElInput
+                    modelValue={row.salesUnit ? props.displayUnitName(row.salesUnit) : ''}
+                    onUpdate:modelValue={(value: string) => (row.salesUnit = value)}
+                    maxlength={30}
+                    placeholder="单位"
+                  />
                 </label>
                 <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
                   成本单价（元）
@@ -565,8 +593,29 @@
     {
       prop: 'baseUnit',
       label: '基本单位',
-      width: 110,
-      formatter: (row: ScmDocumentLine) => <ElInput v-model={row.baseUnit} aria-label="基本单位" />
+      width: props.quotation ? 150 : 110,
+      formatter: (row: ScmDocumentLine) =>
+        props.quotation ? (
+          <ElSelect
+            v-model={row.baseUnit}
+            filterable
+            clearable
+            disabled={props.disabled}
+            placeholder="请选择单位"
+            aria-label="基本单位"
+            class="w-full!"
+          >
+            {props.units.map((unit) => (
+              <ElOption key={unit.id} value={unit.name} label={formatUnitDisplayName(unit.name)} />
+            ))}
+          </ElSelect>
+        ) : (
+          <ElInput
+            modelValue={row.baseUnit ? props.displayUnitName(row.baseUnit) : ''}
+            onUpdate:modelValue={(value: string) => (row.baseUnit = value)}
+            aria-label="基本单位"
+          />
+        )
     },
     ...(props.quotation
       ? ([
@@ -660,7 +709,7 @@
             label: '辅助单位',
             width: 100,
             formatter: (row: ScmDocumentLine) =>
-              materialFor(row)?.auxiliaryUnit ?? row.auxiliaryUnit ?? '—'
+              props.displayUnitName(materialFor(row)?.auxiliaryUnit ?? row.auxiliaryUnit ?? '—')
           },
           {
             prop: 'auxiliaryQuantity2',
@@ -674,7 +723,7 @@
             label: '辅助单位2',
             width: 100,
             formatter: (row: ScmDocumentLine) =>
-              materialFor(row)?.auxiliaryUnit2 ?? row.auxiliaryUnit2 ?? '—'
+              props.displayUnitName(materialFor(row)?.auxiliaryUnit2 ?? row.auxiliaryUnit2 ?? '—')
           }
         ]
       : []),
@@ -739,7 +788,8 @@
             prop: 'auxiliaryUnit',
             label: '辅助单位',
             width: 100,
-            formatter: (row: ScmDocumentLine) => materialFor(row)?.auxiliaryUnit ?? '—'
+            formatter: (row: ScmDocumentLine) =>
+              props.displayUnitName(materialFor(row)?.auxiliaryUnit ?? '—')
           }
         ]
       : []),

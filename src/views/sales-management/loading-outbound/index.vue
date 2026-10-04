@@ -48,7 +48,9 @@
           <p class="text-sm text-[var(--art-gray-700)]">
             {{ activeRow?.loadingNo }} · {{ activeRow?.materialDescription }}：待出库
             <strong class="tabular-nums">{{ remainingQuantity }}</strong>
-            {{ activeRow?.baseUnit }}。选择库存批次后可修改各批次出库数量。
+            {{
+              unitDisplayName(activeRow?.tenantId || '', activeRow?.baseUnit)
+            }}。选择库存批次后可修改各批次出库数量。
           </p>
           <ElAlert v-if="stockError" type="error" :title="stockError" show-icon :closable="false" />
           <ArtTable
@@ -69,7 +71,7 @@
             {{
               selectedStocks.reduce((sum, stock) => sum + Number(stock.outboundQuantity || 0), 0)
             }}
-            {{ activeRow?.baseUnit }}
+            {{ unitDisplayName(activeRow?.tenantId || '', activeRow?.baseUnit) }}
           </p>
         </div>
       </ArtDialog>
@@ -78,6 +80,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { computed, ref, watch } from 'vue'
   import { storeToRefs } from 'pinia'
   import { useRoute } from 'vue-router'
@@ -115,6 +118,7 @@
   } from '@scm/api'
 
   defineOptions({ name: 'ScmLoadingOutbound' })
+  const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
 
   interface StockChoice extends ScmOutboundStockBatch {
     outboundQuantity: number
@@ -204,6 +208,7 @@
 
   async function fetchPage(params: typeof query.value & { current?: number; size?: number }) {
     const rows = await fetchScmLoadingOutboundRows(effectiveTenantId.value || undefined)
+    await loadUnitDisplayNames(rows.map((row) => row.tenantId))
     const contains = (value: string, term?: string) =>
       value.toLocaleLowerCase().includes((term ?? '').trim().toLocaleLowerCase())
     const baseRows = rows.filter((row) => {
@@ -263,7 +268,12 @@
     ...(displayMode.value === 'line'
       ? [
           { prop: 'specification', label: '规格型号', minWidth: 140 },
-          { prop: 'baseUnit', label: '基本单位', width: 100 },
+          {
+            prop: 'baseUnit',
+            label: '基本单位',
+            width: 100,
+            formatter: (row: LoadingListRow) => unitDisplayName(row.tenantId, row.baseUnit)
+          },
           { prop: 'loadedQuantity', label: '装车数量', width: 110, align: 'right' },
           { prop: 'deliveredQuantity', label: '已交货数量', width: 120, align: 'right' },
           { prop: 'warehouseName', label: '仓库', minWidth: 130 },
@@ -369,7 +379,7 @@
       prop: 'baseUnit',
       label: '基本单位',
       width: 95,
-      formatter: () => activeRow.value?.baseUnit ?? ''
+      formatter: () => unitDisplayName(activeRow.value?.tenantId || '', activeRow.value?.baseUnit)
     },
     {
       prop: 'outboundQuantity',
