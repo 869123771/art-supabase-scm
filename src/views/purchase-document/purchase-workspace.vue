@@ -113,6 +113,7 @@
   import { fetchEmployeeSelectorList } from '@/api/integration/employees'
   import type { ColumnOption } from '@/types'
   import { formatCurrencyValue } from '@/utils/ui/format'
+  import { pageInfoHandler } from '@/utils/table/table-utils'
   import {
     documentGroupSpan,
     expandDocumentLines,
@@ -1010,14 +1011,15 @@
   function handleSaved(mode: 'add' | 'edit') {
     void (mode === 'add' ? tableRef.value?.refreshCreate() : tableRef.value?.refreshUpdate())
   }
-  async function fetchPage(query: ScmPurchaseQuery) {
+  async function fetchPage(query: ScmPurchaseQuery & { current: number; size: number }) {
+    const pageQuery = { ...query, ...pageInfoHandler(query) }
     if (displayMode.value === 'document') {
       visibleRows.value = []
-      return fetchScmPurchaseDocuments(props.kind, query)
+      return fetchScmPurchaseDocuments(props.kind, pageQuery)
     }
     const documents = await loadAllDocumentPages(
       (page: ScmPurchaseQuery) => fetchScmPurchaseDocuments(props.kind, page),
-      query
+      pageQuery
     )
     await loadUnitDisplayNames(documents.map((document) => document.tenantId))
     const rows = expandDocumentLines(
@@ -1025,7 +1027,7 @@
       (document) => document.lines,
       (line, index) => line.lineId || String(index)
     )
-    const result = { ...paginateDetailRows(rows, query.from, query.to), error: null }
+    const result = { ...paginateDetailRows(rows, pageQuery.from, pageQuery.to), error: null }
     visibleRows.value = result.data
     return result
   }

@@ -1,1 +1,0 @@
-import{ji as e,ra as t,zi as n}from"./sys-DdREK04E.js";import{t as r}from"./purchase-workspace-BkI2839f.js";var i=n({name:`ScmPurchaseOrder`,__name:`index`,setup(n){return(n,i)=>(t(),e(r,{kind:`purchase_order`}))}});export{i as default};

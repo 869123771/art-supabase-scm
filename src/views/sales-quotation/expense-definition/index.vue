@@ -19,7 +19,7 @@
         ref="tableRef"
         v-model="search"
         :search-items="searchItems"
-        :api-fn="fetchQuoteExpenses"
+        :api-fn="fetchPage"
         :columns-factory="columnsFactory"
         :header-actions="headerActions"
         header-actions-placement="workspace"
@@ -57,6 +57,8 @@
   import BusinessTableWorkspaceActions from '@/components/business/business-table-workspace-actions/index.vue'
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
   import { useArtFeedback } from '@/hooks/core/useArtFeedback'
+  import { loadAllDocumentPages } from '@/utils/business/document-detail-list'
+  import { pageInfoHandler } from '@/utils/table/table-utils'
   import { useTenantScopeStore } from '@/store/modules/tenant-scope'
   import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
   import { useUserStore } from '@/store/modules/user'
@@ -358,9 +360,13 @@
     )
   }
 
+  function fetchPage(query: QuoteExpenseQuery & { current: number; size: number }) {
+    return fetchQuoteExpenses({ ...query, ...pageInfoHandler(query) })
+  }
+
   async function exportExpenses(): Promise<Array<Record<string, unknown>>> {
-    const { data } = await fetchQuoteExpenses({ ...search.value, from: 0, to: 9999 })
-    return (data ?? []).map((row) => ({
+    const expenses = await loadAllDocumentPages(fetchQuoteExpenses, { ...search.value })
+    return expenses.map((row) => ({
       expenseCode: row.expenseCode,
       expenseName: row.expenseName,
       enabled: row.enabled ? '启用' : '禁用',

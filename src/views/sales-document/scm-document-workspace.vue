@@ -83,6 +83,7 @@
   import { ElMessage, ElTag } from 'element-plus'
   import { startWorkflow } from '@/api/workflow'
   import { storeToRefs } from 'pinia'
+  import { pageInfoHandler } from '@/utils/table/table-utils'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { useRouter } from 'vue-router'
   import ArtButtonMore, {
@@ -1249,15 +1250,16 @@
     )
   }
 
-  async function fetchPage(query: ScmSalesDocumentQuery) {
+  async function fetchPage(query: ScmSalesDocumentQuery & { current: number; size: number }) {
+    const pageQuery = { ...query, ...pageInfoHandler(query) }
     if (displayMode.value === 'document') {
       visibleRows.value = []
-      return fetchScmSalesDocuments(props.kind, query)
+      return fetchScmSalesDocuments(props.kind, pageQuery)
     }
-    const documents = await fetchAllDocuments(query)
+    const documents = await fetchAllDocuments(pageQuery)
     await loadUnitDisplayNames(documents.map((document) => document.tenantId))
     const result = {
-      ...paginateDetailRows(expandQuotationLines(documents), query.from, query.to),
+      ...paginateDetailRows(expandQuotationLines(documents), pageQuery.from, pageQuery.to),
       error: null
     }
     visibleRows.value = result.data
