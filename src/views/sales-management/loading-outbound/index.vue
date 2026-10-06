@@ -23,7 +23,7 @@
         :columns-factory="columnsFactory"
         :search-bar-props="{ span: 6, labelWidth: 82, showExpand: true }"
         :table-props="{
-          rowKey: displayMode === 'document' ? 'loadingId' : 'id',
+          rowKey: 'id',
           spanMethod: mergeDocumentCells,
           tableLayout: 'fixed',
           emptyText: '暂无符合条件的装车明细',
@@ -35,7 +35,7 @@
           <ElRadioGroup
             v-model="displayMode"
             aria-label="单据列表展示方式"
-            @change="tableRef?.refreshContext()"
+            @change="refreshDisplayMode"
           >
             <ElRadioButton label="document" value="document">按单据</ElRadioButton>
             <ElRadioButton label="line" value="line">按明细</ElRadioButton>
@@ -52,20 +52,26 @@
               unitDisplayName(activeRow?.tenantId || '', activeRow?.baseUnit)
             }}。选择库存批次后可修改各批次出库数量。
           </p>
-          <ElAlert v-if="stockError" type="error" :title="stockError" show-icon :closable="false" />
-          <ArtTable
-            :data="stockChoices"
-            :columns="stockColumns"
+          <ArtSectionCard
+            title="可用库存批次"
             :loading="stockLoading"
-            :pagination="false"
-            :max-height="430"
-            row-key="id"
-            border
-            scrollbar-always-on
-            empty-text="暂无可用库存"
-            empty-description="请检查项目库存、库位预留及物料批次。"
-            @selection-change="onStockSelection"
-          />
+            :error="stockError"
+            @retry="retryLoad"
+          >
+            <ArtTable
+              :data="stockChoices"
+              :columns="stockColumns"
+              :loading="stockLoading"
+              :pagination="false"
+              :max-height="430"
+              row-key="id"
+              border
+              scrollbar-always-on
+              empty-text="暂无可用库存"
+              empty-description="请检查项目库存、库位预留及物料批次。"
+              @selection-change="onStockSelection"
+            />
+          </ArtSectionCard>
           <p class="text-xs text-[var(--art-gray-600)]">
             已选 {{ selectedStocks.length }} 个批次 · 本次出库
             {{
@@ -81,18 +87,10 @@
 
 <script setup lang="tsx">
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
-  import { computed, ref, watch } from 'vue'
+  import { computed, reactive, ref, watch } from 'vue'
   import { storeToRefs } from 'pinia'
   import { useRoute } from 'vue-router'
-  import {
-    ElAlert,
-    ElInput,
-    ElInputNumber,
-    ElMessage,
-    ElOption,
-    ElSelect,
-    ElTag
-  } from 'element-plus'
+  import { ElInput, ElInputNumber, ElMessage, ElOption, ElSelect, ElTag } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
   import ArtButtonTable from '@/components/core/forms/art-button-table/index.vue'
@@ -106,6 +104,8 @@
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
   import { useAuth } from '@/hooks/core/useAuth'
   import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
+  import { useDetailRecord } from '@/hooks/core/useDetailRecord'
+  import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import { useTenantScopeStore } from '@/store/modules/tenant-scope'
   import type { ColumnOption } from '@/types'
   import { documentGroupSpan, groupDocumentLines } from '@/utils/business/document-detail-list'
@@ -133,6 +133,11 @@
   const tableRef = ref<ArtTableQueryExpose>()
   type LoadingListRow = ScmLoadingOutboundRow & { detailCount?: number }
   const displayMode = ref<'document' | 'line'>('document')
+
+  function refreshDisplayMode(): void {
+    tableRef.value?.resetColumns()
+    void tableRef.value?.refreshContext()
+  }
   const visibleRows = ref<LoadingListRow[]>([])
   const lineProperties = new Set([
     'materialCode',
@@ -201,10 +206,36 @@
     Math.max(0, (activeRow.value?.loadedQuantity ?? 0) - (activeRow.value?.deliveredQuantity ?? 0))
   )
   const outboundDialogRef = ref<ArtDialogExpose>()
-  const stockChoices = ref<StockChoice[]>([])
+  const {
+    detail,
+    loading: stockLoading,
+    loadError: stockError,
+    openDetail,
+    loadDetail,
+    retryLoad
+  } = useDetailRecord<StockChoice[]>(async () => {
+    const row = activeRow.value
+    if (!row?.projectId) throw new Error('装车明细缺少项目，请刷新列表后重试')
+    const remaining = remainingQuantity.value
+    const stocks = await fetchScmOutboundStocks(row.tenantId, row.projectId, row.materialId)
+    return {
+      data: stocks.map((stock) => ({
+        ...stock,
+        outboundQuantity: Math.min(stock.availableQuantity, remaining),
+        selectedSerialIds: [],
+        remark: ''
+      }))
+    }
+  }, '现有库存加载失败，请重试')
+  const stockChoices = computed(() => reactive(detail.value ?? []))
   const selectedStocks = ref<StockChoice[]>([])
-  const stockLoading = ref(false)
-  const stockError = ref('')
+  let openRevision = 0
+  watch([effectiveTenantId, () => route.fullPath], () => {
+    openRevision += 1
+    openDetail('')
+    selectedStocks.value = []
+    void outboundDialogRef.value?.handleClose()
+  })
 
   async function fetchPage(params: typeof query.value & { current?: number; size?: number }) {
     const rows = await fetchScmLoadingOutboundRows(effectiveTenantId.value || undefined)
@@ -457,32 +488,20 @@
   async function openOutbound(row: ScmLoadingOutboundRow): Promise<void> {
     if (!row.projectId || !row.materialId || row.outboundStatus === 'complete') return
     activeRow.value = row
-    stockChoices.value = []
+    const revision = ++openRevision
+    openDetail(row.id)
     selectedStocks.value = []
-    stockError.value = ''
     await outboundDialogRef.value?.handleOpen(undefined, {
       title: `销售出库 · ${row.loadingNo}`,
       confirmText: '执行出库',
-      loading: true,
-      loadingText: '正在加载现有库存…',
-      onOpen: async (_data, api) => {
-        stockLoading.value = true
-        try {
-          const stocks = await fetchScmOutboundStocks(row.tenantId, row.projectId!, row.materialId)
-          stockChoices.value = stocks.map((stock) => ({
-            ...stock,
-            outboundQuantity: Math.min(stock.availableQuantity, remainingQuantity.value),
-            selectedSerialIds: [],
-            remark: ''
-          }))
-        } catch {
-          stockError.value = '现有库存加载失败，请关闭弹窗后重试。'
-        } finally {
-          stockLoading.value = false
-          api.setLoading(false)
-        }
+      onOpen: () => loadDetail(row.id),
+      onClose: () => {
+        openRevision += 1
+        openDetail('')
+        selectedStocks.value = []
       },
       onConfirm: async () => {
+        if (revision !== openRevision || stockLoading.value || stockError.value) return false
         const selected = selectedStocks.value.filter((stock) => stock.outboundQuantity > 0)
         if (!selected.length) {
           ElMessage.warning('请选择至少一个库存批次并填写出库数量')
@@ -516,11 +535,13 @@
               requestKey: crypto.randomUUID()
             }))
           )
+          if (revision !== openRevision) return false
           ElMessage.success('销售出库流水已生成')
           await tableRef.value?.refreshUpdate()
           return true
         } catch (error) {
-          notifyFriendlyError(error, '销售出库失败，请核对库存和装车剩余数量')
+          if (revision === openRevision)
+            notifyFriendlyError(error, '销售出库失败，请核对库存和装车剩余数量')
           return false
         }
       }

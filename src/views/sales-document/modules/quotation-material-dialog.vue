@@ -14,10 +14,17 @@
           class="w-full!"
         />
       </ArtSectionCard>
-      <ArtSectionCard title="物料编码配置" subtitle="选项与 MDM 物料编码主数据一致。">
+      <ArtSectionCard
+        title="物料编码配置"
+        subtitle="选项与 MDM 物料编码主数据一致。"
+        :loading="loading"
+        :error="loadError"
+        @retry="retryLoad"
+      >
         <ArtForm
           ref="formRef"
-          v-model="form"
+          :model-value="form"
+          @update:model-value="replaceReactiveModel(form, $event)"
           :items="formItems"
           :rules="rules"
           :span="12"
@@ -43,6 +50,7 @@
 </template>
 
 <script setup lang="ts">
+  import { replaceReactiveModel } from '@/utils/form/model'
   import { ElMessage, type FormRules } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
@@ -51,6 +59,7 @@
   import ArtTable from '@/components/core/tables/art-table/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
+  import { useDetailRecord } from '@/hooks/core/useDetailRecord'
   import { useUserStore } from '@/store/modules/user'
   import type { ColumnOption } from '@/types'
   import { validateArtFormForSubmit } from '@/utils/form/validate-art-form'
@@ -70,12 +79,29 @@
   const dialogRef = ref<ArtDialogExpose<ScmSalesDocument>>()
   const formRef = ref<InstanceType<typeof ArtForm>>()
   const quotation = ref<ScmSalesDocument>()
-  const references = ref<ScmEngineeringReferenceOptions>({
-    categories: [],
-    materialTypes: [],
-    units: [],
-    codeRules: []
-  })
+  const { detail, loading, loadError, openDetail, loadDetail, retryLoad } =
+    useDetailRecord<ScmEngineeringReferenceOptions>(async (tenantId) => {
+      await userStore.ensureDictLoaded('mdmMaterialSource')
+      return await fetchScmEngineeringReferenceOptions(tenantId)
+    }, '物料主数据加载失败，请重试')
+  const references = computed(
+    () =>
+      detail.value ?? {
+        categories: [],
+        materialTypes: [],
+        units: [],
+        codeRules: []
+      }
+  )
+  let openRevision = 0
+  const route = useRoute()
+  watch(
+    () => route.fullPath,
+    () => {
+      openRevision += 1
+      openDetail('')
+    }
+  )
   const form = reactive<ScmQuotationMaterialConfig>({
     materialTypeId: '',
     materialSource: 'self_made',
@@ -163,18 +189,23 @@
   }
 
   async function handleConfirm(): Promise<boolean> {
-    if (!quotation.value) return false
+    const source = quotation.value
+    const revision = openRevision
+    if (!source || loading.value || loadError.value) return false
     try {
       if (!(await validateArtFormForSubmit(formRef.value))) return false
+      if (revision !== openRevision) return false
       await generateScmQuotationMaterials(
-        quotation.value.id,
+        source.id,
         pendingLines.value.map((line) => line.lineId),
         { ...form, imageUrls: [...form.imageUrls] }
       )
+      if (revision !== openRevision) return false
       emit('success')
       return true
     } catch (error) {
-      notifyFriendlyError(error, '物料编码生成失败，请检查配置、报价状态和权限后重试')
+      if (revision === openRevision)
+        notifyFriendlyError(error, '物料编码生成失败，请检查配置、报价状态和权限后重试')
       return false
     }
   }
@@ -185,6 +216,8 @@
       return
     }
     quotation.value = record
+    openRevision += 1
+    openDetail(record.tenantId)
     Object.assign(form, {
       materialTypeId: '',
       materialSource: 'self_made',
@@ -196,42 +229,31 @@
     await dialogRef.value?.handleOpen(record, {
       title: `生成物料编码 · ${record.documentNo}`,
       confirmText: '执行生成',
-      loading: true,
-      loadingText: '正在加载物料主数据…',
-      onOpen: async (_data, api) => {
-        api.setLoading(true)
-        try {
-          await userStore.ensureDictLoaded('mdmMaterialSource')
-          const response = await fetchScmEngineeringReferenceOptions(record.tenantId)
-          references.value = response.data ?? {
-            categories: [],
-            materialTypes: [],
-            units: [],
-            codeRules: []
-          }
-          form.materialTypeId =
-            references.value.materialTypes.find((item) => item.name === '半成品')?.id ?? ''
-          form.categoryId =
-            references.value.categories.find((item) => item.name === '配件')?.id ?? ''
-          form.baseUnitId = references.value.units.find((item) => item.name === '件')?.id ?? ''
-          form.codeRuleId =
-            references.value.codeRules.find((item) => item.name.includes('半成品'))?.id ??
-            references.value.codeRules[0]?.id ??
-            ''
-          form.materialSource = String(
-            (userStore.getDictMap?.mdmMaterialSource ?? []).find((item) => item.label === '自制')
-              ?.value ?? 'self_made'
-          )
-        } catch {
-          ElMessage.warning('物料主数据加载失败，请关闭弹窗后重试')
-        } finally {
-          api.setLoading(false)
-        }
+      onOpen: () => loadDetail(record.tenantId),
+      onClose: () => {
+        openRevision += 1
+        openDetail('')
+        quotation.value = undefined
       },
       onConfirm: handleConfirm,
       dialogProps: { closeOnClickModal: false }
     })
   }
 
+  watch(detail, (options) => {
+    if (!options) return
+    form.materialTypeId ||= options.materialTypes.find((item) => item.name === '半成品')?.id ?? ''
+    form.categoryId ||= options.categories.find((item) => item.name === '配件')?.id ?? ''
+    form.baseUnitId ||= options.units.find((item) => item.name === '件')?.id ?? ''
+    form.codeRuleId ||=
+      options.codeRules.find((item) => item.name.includes('半成品'))?.id ??
+      options.codeRules[0]?.id ??
+      ''
+    if (form.materialSource === 'self_made')
+      form.materialSource = String(
+        (userStore.getDictMap?.mdmMaterialSource ?? []).find((item) => item.label === '自制')
+          ?.value ?? 'self_made'
+      )
+  })
   defineExpose({ handleOpen })
 </script>

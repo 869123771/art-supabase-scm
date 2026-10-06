@@ -2,6 +2,7 @@ import { useSupabase } from '@/hooks'
 import { omit, uniq } from 'lodash-es'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
 import { fetchAllRangePages } from '@/utils/supabase'
+import { createTenantScopeReadGuard } from '@/utils/tenant-scope-context'
 import { buildOrIlikeFilter } from '@/utils/supabase/search'
 import { toScmPurchaseLinePayload } from './purchase-line-payload'
 import type {
@@ -110,6 +111,7 @@ export async function fetchScmReceiptBatchOptions(
       .eq('material_id', materialId)
       .eq('owner_type', query.ownerType || 'self')
       .order('received_at', { ascending: false })
+      .order('id')
       .range(from, to)
     if (query.warehouseId) request = request.eq('warehouse_id', query.warehouseId)
     if (query.ownerId) request = request.eq('owner_id', query.ownerId)
@@ -226,6 +228,7 @@ export async function fetchScmPurchaseMaterialCandidates(
     )
     .eq('tenant_id', tenantId)
     .order('material_code')
+    .order('id')
     .range(query.from, query.to)
   if (query.categoryIds?.length) request = request.in('category_id', query.categoryIds)
   if (query.keyword?.trim())
@@ -393,6 +396,7 @@ export async function fetchScmPurchaseDocuments(
     .select(documentSelect, { count: 'exact' })
     .eq('kind', kind)
     .order('updated_at', { ascending: false })
+    .order('id')
     .range(from, to)
   if (keyword?.trim()) {
     const matches = await responseHandle<Array<{ id: string }>>(
@@ -407,9 +411,11 @@ export async function fetchScmPurchaseDocuments(
     request = request.in('id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000'])
   }
   if (status) request = request.eq('status', status)
+  if (query.documentId) request = request.eq('id', query.documentId)
   if (tenantId) request = request.eq('tenant_id', tenantId)
   const result = await responseHandle<ScmPurchaseDocument[]>(() => request, {
-    showErrorMessage: true,
+    breakReturn: Boolean(query.documentId),
+    showErrorMessage: !query.documentId,
     errorMessage: '采购单据加载失败，请稍后重试'
   })
   if (result.data?.length) {
@@ -719,12 +725,17 @@ export async function transitionScmPurchaseDocument(id: string, status: ScmPurch
   )
 }
 
-export async function fetchScmSupplierOptions(tenantId: string) {
+export async function fetchScmSupplierOptions(tenantId: string, supplierIds?: string[]) {
+  const ids = supplierIds === undefined ? null : uniq(supplierIds.filter(Boolean))
+  if (ids?.length === 0) {
+    const data: ScmSupplierOption[] = []
+    return { data, error: null, total: 0 }
+  }
   return responseHandle<ScmSupplierOption[]>(
     () =>
       supabase.rpc('scm_purchase_suppliers_secure', {
         p_tenant_id: tenantId,
-        p_ids: null
+        p_ids: ids
       }),
     { breakReturn: true, showErrorMessage: true, errorMessage: '供应商列表加载失败，请稍后重试' }
   )
@@ -744,17 +755,21 @@ export async function fetchScmPurchaseMenuIds() {
 }
 
 export async function fetchScmPurchaseSourceOptions(kind: ScmPurchaseKind, tenantId: string) {
-  const result = await responseHandle<ScmPurchaseDocument[]>(
-    () =>
-      supabase
-        .from('scm_purchase_document')
-        .select(documentSelect)
-        .eq('kind', kind)
-        .eq('tenant_id', tenantId)
-        .order('updated_at', { ascending: false })
-        .range(0, 499),
-    { breakReturn: true, showErrorMessage: true, errorMessage: '来源单据加载失败，请稍后重试' }
+  const result = await fetchAllRangePages<ScmPurchaseDocument>(({ from, to }) =>
+    responseHandle<ScmPurchaseDocument[]>(
+      () =>
+        supabase
+          .from('scm_purchase_document')
+          .select(documentSelect)
+          .eq('kind', kind)
+          .eq('tenant_id', tenantId)
+          .order('updated_at', { ascending: false })
+          .order('id')
+          .range(from, to),
+      { breakReturn: true, showErrorMessage: true, errorMessage: '来源单据加载失败，请稍后重试' }
+    )
   )
+  if (result.error) throw result.error
   if (result.data?.length) {
     result.data = await attachSuppliers(result.data)
     if (kind === 'purchase_request') result.data = await attachRequestQuantities(result.data)
@@ -800,23 +815,35 @@ export async function fetchScmPurchaseRemainingLines(source: ScmPurchaseDocument
 }
 
 export async function fetchScmRecentPurchasePrices(tenantId: string, materialIds: string[]) {
-  if (!materialIds.length) return new Map<string, number>()
-  const { data } = await responseHandle<Array<Pick<ScmPurchaseDocument, 'lines'>>>(
-    () =>
-      supabase
-        .from('scm_purchase_document')
-        .select('lines')
-        .eq('tenant_id', tenantId)
-        .eq('kind', 'purchase_order')
-        .in('status', ['approved', 'completed'])
-        .order('document_date', { ascending: false })
-        .range(0, 499),
-    { breakReturn: true, showErrorMessage: true, errorMessage: '最近采购价加载失败，请稍后重试' }
-  )
   const prices = new Map<string, number>()
-  for (const document of data ?? [])
-    for (const line of document.lines)
-      if (materialIds.includes(line.materialId) && !prices.has(line.materialId))
-        prices.set(line.materialId, Number(line.unitPrice))
+  const requested = new Map(uniq(materialIds.filter(Boolean)).map((id) => [id, true]))
+  if (!requested.size) return prices
+  const assertTenantScope = createTenantScopeReadGuard()
+  const pageSize = 500
+  // Stream only until every requested material has its latest price; do not retain all orders.
+  for (let from = 0; ; from += pageSize) {
+    assertTenantScope()
+    const { data } = await responseHandle<Array<Pick<ScmPurchaseDocument, 'lines'>>>(
+      () =>
+        supabase
+          .from('scm_purchase_document')
+          .select('lines')
+          .eq('tenant_id', tenantId)
+          .eq('kind', 'purchase_order')
+          .in('status', ['approved', 'completed'])
+          .order('document_date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + pageSize - 1),
+      { breakReturn: true, showErrorMessage: true, errorMessage: '最近采购价加载失败，请稍后重试' }
+    )
+    assertTenantScope()
+    if (!data) throw new Error('最近采购价未返回数据，请稍后重试')
+    for (const document of data)
+      for (const line of document.lines)
+        if (requested.has(line.materialId) && !prices.has(line.materialId))
+          prices.set(line.materialId, Number(line.unitPrice))
+    if (prices.size === requested.size || data.length < pageSize) break
+  }
   return prices
 }

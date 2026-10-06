@@ -3,7 +3,8 @@
     <template #subtitle>维护报价可选费用的稳定编码、状态和显示方式。</template>
     <ArtForm
       ref="formRef"
-      v-model="form"
+      :model-value="form"
+      @update:model-value="replaceReactiveModel(form, $event)"
       :items="items"
       :rules="rules"
       :validate-on-rule-change="false"
@@ -17,6 +18,7 @@
 </template>
 
 <script setup lang="ts">
+  import { replaceReactiveModel } from '@/utils/form/model'
   import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import type { FormRules } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
@@ -46,7 +48,7 @@
   }
 
   const emit = defineEmits<{ success: [mode: 'add' | 'edit'] }>()
-  const { shouldExposeTenantField } = useTenantScopeFormPolicy()
+  const { shouldExposeTenantField, defaultWriteTenantId } = useTenantScopeFormPolicy()
   const dialogRef = ref<ArtDialogExpose<OpenOptions>>()
   const formRef = ref<{ validate: () => Promise<boolean>; clearValidate: () => void }>()
   const recordId = ref<string>()
@@ -160,7 +162,8 @@
     recordId.value = options.record?.id
     tenantOptions.value = options.tenantOptions
     Object.assign(form, initialForm(), options.record ?? {}, {
-      tenantId: options.record?.tenantId ?? options.effectiveTenantId ?? '',
+      tenantId:
+        options.record?.tenantId ?? options.effectiveTenantId ?? defaultWriteTenantId.value ?? '',
       remark: options.record?.remark ?? ''
     })
     await dialogRef.value?.handleOpen(options, {

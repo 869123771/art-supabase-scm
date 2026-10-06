@@ -4,10 +4,14 @@
       <ArtSectionCard
         title="报价 BOM 父件"
         subtitle="选择已建档的成品或半成品物料作为父件；报价明细将成为组件。"
+        :loading="loading"
+        :error="loadError"
+        @retry="retryLoad"
       >
         <ArtForm
           ref="formRef"
-          v-model="form"
+          :model-value="form"
+          @update:model-value="replaceReactiveModel(form, $event)"
           :items="formItems"
           :rules="rules"
           :span="24"
@@ -34,6 +38,7 @@
 </template>
 
 <script setup lang="ts">
+  import { replaceReactiveModel } from '@/utils/form/model'
   import { ElMessage, type FormRules } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
@@ -41,6 +46,7 @@
   import ArtTable from '@/components/core/tables/art-table/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
+  import { useDetailRecord } from '@/hooks/core/useDetailRecord'
   import type { ColumnOption } from '@/types'
   import { validateArtFormForSubmit } from '@/utils/form/validate-art-form'
   import {
@@ -57,7 +63,19 @@
   const dialogRef = ref<ArtDialogExpose<ScmSalesDocument>>()
   const formRef = ref<InstanceType<typeof ArtForm>>()
   const quotation = ref<ScmSalesDocument>()
-  const materials = ref<ScmMaterialOption[]>([])
+  const { detail, loading, loadError, openDetail, loadDetail, retryLoad } = useDetailRecord<
+    ScmMaterialOption[]
+  >(fetchScmMaterialOptions, '父件物料加载失败，请重试')
+  const materials = computed(() => detail.value ?? [])
+  let openRevision = 0
+  const route = useRoute()
+  watch(
+    () => route.fullPath,
+    () => {
+      openRevision += 1
+      openDetail('')
+    }
+  )
   const form = reactive({ parentMaterialId: '' })
   const componentIds = computed(
     () => new Set(quotation.value?.lines.map((line) => line.materialId) ?? [])
@@ -90,14 +108,19 @@
   ]
 
   async function handleConfirm(): Promise<boolean> {
-    if (!quotation.value) return false
+    const source = quotation.value
+    const revision = openRevision
+    if (!source || loading.value || loadError.value) return false
     try {
       if (!(await validateArtFormForSubmit(formRef.value))) return false
-      await convertScmQuotationToBom(quotation.value.id, form.parentMaterialId)
+      if (revision !== openRevision) return false
+      await convertScmQuotationToBom(source.id, form.parentMaterialId)
+      if (revision !== openRevision) return false
       emit('success')
       return true
     } catch (error) {
-      notifyFriendlyError(error, '转报价 BOM 失败，请检查父件、报价明细和权限后重试')
+      if (revision === openRevision)
+        notifyFriendlyError(error, '转报价 BOM 失败，请检查父件、报价明细和权限后重试')
       return false
     }
   }
@@ -112,22 +135,17 @@
       return
     }
     quotation.value = record
+    openRevision += 1
+    openDetail(record.tenantId)
     form.parentMaterialId = ''
     await dialogRef.value?.handleOpen(record, {
       title: `转报价 BOM · ${record.documentNo}`,
       confirmText: '执行生成',
-      loading: true,
-      loadingText: '正在加载父件物料…',
-      onOpen: async (_data, api) => {
-        api.setLoading(true)
-        try {
-          const response = await fetchScmMaterialOptions(record.tenantId)
-          materials.value = response.data ?? []
-        } catch {
-          ElMessage.warning('物料主数据加载失败，请关闭弹窗后重试')
-        } finally {
-          api.setLoading(false)
-        }
+      onOpen: () => loadDetail(record.tenantId),
+      onClose: () => {
+        openRevision += 1
+        openDetail('')
+        quotation.value = undefined
       },
       onConfirm: handleConfirm,
       dialogProps: { closeOnClickModal: false }

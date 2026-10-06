@@ -1,1 +1,0 @@
-import{Ki as e,Ri as t,ua as n}from"./sys-D4Sdcfku.js";import{t as r}from"./purchase-workspace-BRGGHUOw.js";var i=e({name:`ScmPurchaseContract`,__name:`index`,setup(e){return(e,i)=>(n(),t(r,{kind:`purchase_contract`}))}});export{i as default};

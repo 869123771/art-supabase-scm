@@ -4,9 +4,20 @@
       >选择项目、填写报价数量与单价，并按需添加费用。总价在保存时由数据库重新核算。</template
     >
     <div class="flex min-w-0 flex-col gap-4">
+      <ArtAsyncState
+        v-if="referencesError"
+        :error="referencesError"
+        :loading="referencesLoading"
+        loading-mode="mask"
+        error-title="项目与费用加载失败"
+        size="compact"
+        :min-height="160"
+        @retry="loadReferences(form.tenantId)"
+      />
       <ArtForm
         ref="formRef"
-        v-model="form"
+        :model-value="form"
+        @update:model-value="replaceReactiveModel(form, $event)"
         :items="items"
         :rules="rules"
         :validate-on-rule-change="false"
@@ -66,8 +77,11 @@
 </template>
 
 <script setup lang="tsx">
+  import { replaceReactiveModel } from '@/utils/form/model'
   import { ElInputNumber, ElMessage, ElOption, ElSelect, type FormRules } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
+  import ArtAsyncState from '@/components/core/feedback/art-async-state/index.vue'
+  import { createFriendlySupabaseError } from '@/utils/supabase/error'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
   import ArtForm, { type FormItem } from '@/components/core/forms/art-form/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
@@ -79,7 +93,7 @@
   import '../../../scm-editable-table.css'
   import {
     createQuoteCategory,
-    fetchQuoteExpenses,
+    fetchQuoteExpenseOptions,
     fetchScmProjectOptions,
     updateQuoteCategory,
     type QuoteCategoryWrite,
@@ -99,7 +113,7 @@
   }
 
   const emit = defineEmits<{ success: [mode: 'add' | 'edit'] }>()
-  const { shouldExposeTenantField } = useTenantScopeFormPolicy()
+  const { shouldExposeTenantField, defaultWriteTenantId } = useTenantScopeFormPolicy()
   const dialogRef = ref<ArtDialogExpose<OpenOptions>>()
   const formRef = ref<{ validate: () => Promise<boolean>; clearValidate: () => void }>()
   const feeTableRef = ref<ArtTableExpose>()
@@ -108,6 +122,7 @@
   const availableProjects = ref<ScmProjectOption[]>([])
   const availableExpenses = ref<ScmQuoteExpense[]>([])
   const referencesLoading = ref(false)
+  const referencesError = ref<Error | null>(null)
   let loadingRevision = 0
   let preparing = false
 
@@ -282,18 +297,29 @@
     const revision = ++loadingRevision
     availableProjects.value = []
     availableExpenses.value = []
-    if (!tenantId) return
+    if (!tenantId) {
+      referencesError.value = null
+      referencesLoading.value = false
+      return
+    }
     referencesLoading.value = true
     try {
       const [projects, expenses] = await Promise.all([
         fetchScmProjectOptions(tenantId),
-        fetchQuoteExpenses({ tenantId, enabled: true })
+        fetchQuoteExpenseOptions({ tenantId, enabled: true })
       ])
       if (revision !== loadingRevision) return
+      if (projects.error) throw projects.error
+      if (expenses.error) throw expenses.error
       availableProjects.value = projects.data ?? []
       availableExpenses.value = expenses.data ?? []
-    } catch {
+      referencesError.value = null
+    } catch (error) {
       if (revision === loadingRevision) {
+        referencesError.value = createFriendlySupabaseError(
+          error,
+          '项目与费用暂时无法加载，请重新加载后继续填写'
+        )
         availableProjects.value = []
         availableExpenses.value = []
       }
@@ -315,6 +341,10 @@
   }
 
   async function handleSubmit(): Promise<boolean> {
+    if (referencesLoading.value || referencesError.value) {
+      ElMessage.warning('请先完成项目与费用加载后再保存')
+      return false
+    }
     try {
       if (!(await formRef.value?.validate())) return false
       const feeValidation = await feeTableRef.value?.validate()
@@ -345,7 +375,8 @@
     recordId.value = options.copy ? undefined : options.record?.id
     tenantOptions.value = options.tenantOptions
     Object.assign(form, initialForm(), options.record ?? {}, {
-      tenantId: options.record?.tenantId ?? options.effectiveTenantId ?? '',
+      tenantId:
+        options.record?.tenantId ?? options.effectiveTenantId ?? defaultWriteTenantId.value ?? '',
       feeItems: options.record?.feeItems.map((fee) => ({ ...fee })) ?? [],
       remark: options.record?.remark ?? ''
     })

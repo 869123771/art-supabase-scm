@@ -1,6 +1,8 @@
 import { useSupabase } from '@/hooks'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
 import { buildOrIlikeFilter } from '@/utils/supabase/search'
+import { fetchAllRangePages } from '@/utils/supabase/pagination'
+import { createFriendlySupabaseError } from '@/utils/supabase/error'
 
 export interface ScmQuoteExpense {
   id: string
@@ -59,6 +61,7 @@ export async function fetchQuoteExpenses(query: QuoteExpenseQuery = {}) {
     })
     .order('sort_order')
     .order('expense_name')
+    .order('id')
     .range(from, to)
   if (keyword?.trim()) {
     request = request.or(buildOrIlikeFilter(['expense_code', 'expense_name'], keyword.trim()))
@@ -66,6 +69,17 @@ export async function fetchQuoteExpenses(query: QuoteExpenseQuery = {}) {
   if (enabled !== undefined) request = request.eq('enabled', enabled)
   if (tenantId) request = request.eq('tenant_id', tenantId)
   return responseHandle<ScmQuoteExpense[]>(() => request, { showErrorMessage: true })
+}
+
+/** Complete reference data for forms, imports and fee-name resolution. */
+export async function fetchQuoteExpenseOptions(query: Omit<QuoteExpenseQuery, 'from' | 'to'> = {}) {
+  const result = await fetchAllRangePages<ScmQuoteExpense>(({ from, to }) =>
+    fetchQuoteExpenses({ ...query, from, to })
+  )
+  if (result.error) {
+    throw createFriendlySupabaseError(result.error, '报价费用加载失败，请重试')
+  }
+  return result
 }
 
 export async function createQuoteExpense(input: QuoteExpenseWrite) {

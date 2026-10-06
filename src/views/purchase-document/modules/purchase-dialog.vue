@@ -20,7 +20,8 @@
       <ArtSectionCard title="单据基本信息" subtitle="确定采购业务的项目、供应商与交付时间。">
         <ArtForm
           ref="headerFormRef"
-          v-model="header"
+          :model-value="header"
+          @update:model-value="replaceReactiveModel(header, $event)"
           :items="headerItems"
           :rules="headerRules"
           :validate-on-rule-change="false"
@@ -68,7 +69,8 @@
         subtitle="填写当前单据需要的补充信息。"
       >
         <ArtForm
-          v-model="details"
+          :model-value="details"
+          @update:model-value="replaceReactiveModel(details, $event)"
           :items="detailItems"
           :span="12"
           :gutter="20"
@@ -190,6 +192,7 @@
                   v-if="kind !== 'receipt_notice' && config.permissions.RecentPrice"
                   v-auth="config.permissions.RecentPrice"
                   :disabled="!lines.length"
+                  :loading="recentPricesLoading"
                   @click="applyRecentPrices"
                   ><ArtSvgIcon icon="ri:price-tag-3-line" />获取最近采购价</ElButton
                 >
@@ -656,6 +659,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { replaceReactiveModel } from '@/utils/form/model'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { validateArtFormForSubmit } from '@/utils/form/validate-art-form'
   import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
@@ -769,7 +773,7 @@
   const emit = defineEmits<{ success: [mode: 'add' | 'edit'] }>()
   const userStore = useUserStore()
   const { hasAuth } = useAuth()
-  const { shouldExposeTenantField } = useTenantScopeFormPolicy()
+  const { shouldExposeTenantField, defaultWriteTenantId } = useTenantScopeFormPolicy()
   const dialogRef = ref<ArtDialogExpose<OpenOptions>>()
   const materialDialogRef = ref<ArtDialogExpose>()
   const quotationDialogRef = ref<ArtDialogExpose>()
@@ -831,6 +835,7 @@
   const receiptSourceOrderId = ref('')
   const activeTab = ref('lines')
   const loading = ref(false)
+  const recentPricesLoading = ref(false)
   const referencesLoaded = ref(false)
   const initializationError = ref('')
   let preparing = false
@@ -3057,17 +3062,43 @@
     })
   }
   async function applyRecentPrices() {
-    const prices = await fetchScmRecentPurchasePrices(
-      header.tenantId,
-      lines.value.map((line) => line.materialId)
-    )
-    let count = 0
-    for (const line of lines.value)
-      if (prices.has(line.materialId)) {
-        line.unitPrice = prices.get(line.materialId)!
-        count++
+    if (recentPricesLoading.value || !lines.value.length) return
+    const revision = openRevision
+    const tenantId = header.tenantId
+    const targets = lines.value.map((line) => ({
+      line,
+      materialId: line.materialId,
+      unit: line.unit,
+      unitPrice: line.unitPrice
+    }))
+    recentPricesLoading.value = true
+    try {
+      const prices = await fetchScmRecentPurchasePrices(
+        tenantId,
+        targets.map((item) => item.materialId)
+      )
+      if (revision !== openRevision || tenantId !== header.tenantId) return
+      let count = 0
+      for (const target of targets) {
+        const { line } = target
+        if (
+          lines.value.includes(line) &&
+          line.materialId === target.materialId &&
+          line.unit === target.unit &&
+          line.unitPrice === target.unitPrice &&
+          prices.has(line.materialId)
+        ) {
+          line.unitPrice = prices.get(line.materialId)!
+          count++
+        }
       }
-    ElMessage.success(count ? `已更新 ${count} 项最近采购价` : '暂无可用的历史采购价')
+      ElMessage.success(count ? `已更新 ${count} 项最近采购价` : '暂无可更新的历史采购价')
+    } catch (error) {
+      if (revision === openRevision && tenantId === header.tenantId)
+        notifyFriendlyError(error, '最近采购价加载失败，请稍后重试')
+    } finally {
+      if (revision === openRevision) recentPricesLoading.value = false
+    }
   }
   function addPayment() {
     paymentPlans.value.push({
@@ -3323,6 +3354,7 @@
   }
   async function handleOpen(options: OpenOptions) {
     const revision = ++openRevision
+    recentPricesLoading.value = false
     currentOpenOptions = options
     initializationError.value = ''
     preparing = true
@@ -3334,7 +3366,12 @@
     recordId.value = options.copy ? undefined : options.record?.id
     tenantOptions.value = options.tenantOptions
     Object.assign(header, emptyHeader(), options.record ?? {}, {
-      tenantId: options.record?.tenantId ?? options.effectiveTenantId ?? '',
+      tenantId:
+        options.record?.tenantId ??
+        options.initialSource?.tenantId ??
+        options.effectiveTenantId ??
+        defaultWriteTenantId.value ??
+        '',
       documentNo: options.copy ? '' : (options.record?.documentNo ?? ''),
       documentTypeId: options.record?.documentTypeId ?? '',
       projectId: options.record?.projectId ?? '',
@@ -3467,6 +3504,7 @@
         ++openRevision
         ++referenceRevision
         loading.value = false
+        recentPricesLoading.value = false
       },
       dialogProps: { closeOnClickModal: false }
     })

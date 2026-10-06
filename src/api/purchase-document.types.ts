@@ -168,6 +168,7 @@ export type ScmPurchaseWrite = Pick<
 > & { remark: string }
 
 export interface ScmPurchaseQuery {
+  documentId?: string
   keyword?: string
   status?: ScmPurchaseStatus
   tenantId?: string

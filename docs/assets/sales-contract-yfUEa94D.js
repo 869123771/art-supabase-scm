@@ -1,1 +1,0 @@
-import{Ki as e,Ri as t,ua as n}from"./sys-D4Sdcfku.js";import{t as r}from"./scm-document-workspace-CS9ydfZW.js";var i=e({name:`ScmSalesContract`,__name:`index`,setup(e){return(e,i)=>(n(),t(r,{kind:`sales_contract`}))}});export{i as default};

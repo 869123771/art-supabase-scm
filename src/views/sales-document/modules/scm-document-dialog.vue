@@ -2,10 +2,19 @@
   <ArtDialog ref="dialogRef" size="xl">
     <template #subtitle>维护单据表头与业务明细。金额会在保存时由数据库核算。</template>
     <div class="flex min-w-0 flex-col gap-4">
+      <ArtAsyncState
+        v-if="referencesLoading || referenceError"
+        :loading="referencesLoading"
+        :error="referenceError"
+        error-title="单据选项加载失败"
+        :min-height="96"
+        @retry="loadReferences(header.tenantId)"
+      />
       <ArtSectionCard title="单据基本信息" subtitle="单据编号、项目和客户确定此单据的业务归属。">
         <ArtForm
           ref="headerFormRef"
-          v-model="header"
+          :model-value="header"
+          @update:model-value="replaceReactiveModel(header, $event)"
           :items="headerItems"
           :rules="headerRules"
           :validate-on-rule-change="false"
@@ -40,7 +49,8 @@
       >
         <ArtForm
           ref="detailsFormRef"
-          v-model="details"
+          :model-value="details"
+          @update:model-value="replaceReactiveModel(details, $event)"
           :items="detailItems"
           :rules="detailRules"
           :validate-on-rule-change="false"
@@ -100,7 +110,8 @@
         subtitle="本销售报价是唯一数据源；生成项目报价并提交时，按本单设置创建项目、物料与 BOM 草稿。"
       >
         <ArtForm
-          v-model="details"
+          :model-value="details"
+          @update:model-value="replaceReactiveModel(details, $event)"
           :items="automationItems"
           :span="12"
           :gutter="20"
@@ -614,8 +625,9 @@
 </template>
 
 <script setup lang="tsx">
+  import { replaceReactiveModel } from '@/utils/form/model'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
-  import { omit } from 'lodash-es'
+  import { cloneDeep, omit } from 'lodash-es'
   import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import dayjs from 'dayjs'
   import {
@@ -636,6 +648,7 @@
   import type { EmployeeIntegrationItem } from '@/api/integration/employees'
   import type { DataSelectColumn } from '@/components/core/forms/art-data-select/types'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
+  import ArtAsyncState from '@/components/core/feedback/art-async-state/index.vue'
   import ArtTable, { type ArtTableExpose } from '@/components/core/tables/art-table/index.vue'
   import ArtIconButton from '@/components/core/widget/art-icon-button/index.vue'
   import type { ColumnOption } from '@/types'
@@ -644,7 +657,7 @@
   import { formatCurrencyValue } from '@/utils/ui/format'
   import {
     createScmSalesDocument,
-    fetchQuoteExpenses,
+    fetchQuoteExpenseOptions,
     fetchScmCustomerOptions,
     fetchScmDocumentTypeOptions,
     fetchScmEngineeringReferenceOptions,
@@ -710,7 +723,7 @@
   }
 
   const emit = defineEmits<{ success: [mode: 'add' | 'edit'] }>()
-  const { shouldExposeTenantField } = useTenantScopeFormPolicy()
+  const { shouldExposeTenantField, defaultWriteTenantId } = useTenantScopeFormPolicy()
   const userStore = useUserStore()
   const dialogRef = ref<ArtDialogExpose<OpenOptions>>()
   const shippingOrderPickerRef = ref<ArtDialogExpose>()
@@ -759,9 +772,19 @@
     codeRules: []
   })
   const referencesLoading = ref(false)
+  const referenceError = ref<Error | null>(null)
   const activeTab = ref('lines')
   let preparing = false
   let referenceRevision = 0
+  let openRevision = 0
+  const route = useRoute()
+  function invalidateOpen(): void {
+    openRevision += 1
+    referenceRevision += 1
+    referencesLoading.value = false
+    referenceError.value = null
+  }
+  watch(() => route.fullPath, invalidateOpen)
 
   function initialHeader(): HeaderModel {
     return {
@@ -1262,6 +1285,7 @@
 
   async function loadReferences(tenantId: string): Promise<void> {
     const revision = ++referenceRevision
+    referenceError.value = null
     projectOptions.value = []
     customerOptions.value = []
     materialOptions.value = []
@@ -1276,10 +1300,27 @@
       units: [],
       codeRules: []
     })
-    if (!tenantId) return
+    if (!tenantId) {
+      referencesLoading.value = false
+      referenceError.value = new Error('请选择单据所属租户后重试')
+      return
+    }
     referencesLoading.value = true
     try {
+      await Promise.all(
+        [
+          'scmDiscountMode',
+          'scmPaymentPlanMode',
+          'scmPaymentType',
+          'scmTransportMode',
+          'mdmCurrency',
+          'scmTaxRate',
+          'commonContractClauseType'
+        ].map((code) => userStore.ensureDictLoaded(code))
+      )
+      if (revision !== referenceRevision) return
       await loadUnitDisplayNames([tenantId])
+      if (revision !== referenceRevision) return
       const [
         projects,
         customers,
@@ -1294,7 +1335,7 @@
         fetchScmProjectOptions(tenantId),
         fetchScmCustomerOptions(tenantId),
         fetchScmMaterialOptions(tenantId),
-        fetchQuoteExpenses({ tenantId }),
+        fetchQuoteExpenseOptions({ tenantId }),
         fetchScmDocumentTypeOptions(tenantId, config.value.menuName),
         config.value.sourceKind
           ? fetchScmSourceOptions(config.value.sourceKind, tenantId)
@@ -1310,6 +1351,19 @@
           : Promise.resolve(null)
       ])
       if (revision !== referenceRevision) return
+      for (const result of [
+        projects,
+        customers,
+        materials,
+        expenses,
+        types,
+        sources,
+        engineering,
+        quotations,
+        contracts
+      ]) {
+        if (result && 'error' in result && result.error) throw result.error
+      }
       projectOptions.value = projects.data ?? []
       customerOptions.value = customers.data ?? []
       materialOptions.value = materials.data ?? []
@@ -1336,8 +1390,9 @@
         return item.status === 'effective'
       })
       if (engineering?.data) Object.assign(engineeringReferences, engineering.data)
-    } catch {
-      if (revision === referenceRevision) ElMessage.warning('关联主数据加载失败，请稍后重试')
+    } catch (cause) {
+      if (revision === referenceRevision)
+        referenceError.value = new Error('关联主数据加载失败，请重试；已填写内容会保留', { cause })
     } finally {
       if (revision === referenceRevision) referencesLoading.value = false
     }
@@ -2067,24 +2122,35 @@
   }
 
   async function handleSubmit(): Promise<boolean> {
+    const revision = openRevision
+    const submittingId = recordId.value
+    if (referencesLoading.value || referenceError.value) {
+      ElMessage.warning('请等待单据选项加载成功后再提交')
+      return false
+    }
     try {
       if (!(await headerFormRef.value?.validate())) return false
+      if (revision !== openRevision) return false
       if (
         kind.value !== 'project_quotation' &&
         config.value.fields.length &&
         !(await detailsFormRef.value?.validate())
       )
         return false
+      if (revision !== openRevision) return false
       if (kind.value !== 'project_quotation' && !(await quotationLineTableRef.value?.validate()))
         return false
+      if (revision !== openRevision) return false
       if (config.value.useFees) {
         const feeValidation = await feeTableRef.value?.validate()
+        if (revision !== openRevision) return false
         if (feeValidation && !feeValidation.valid) {
           activeTab.value = 'fees'
           ElMessage.warning(feeValidation.firstError?.message ?? '请完善费用明细')
           return false
         }
       }
+      if (revision !== openRevision || referencesLoading.value || referenceError.value) return false
       if (!validateDetails()) return false
       const cleanDetails: ScmDocumentDetails = { ...details }
       if (kind.value === 'shipping_notice') delete cleanDetails.constructionNo
@@ -2128,9 +2194,10 @@
         clauses: clauses.value,
         remark: header.remark
       }
-      if (recordId.value) await updateScmSalesDocument(recordId.value, payload)
-      else await createScmSalesDocument(payload)
-      emit('success', recordId.value ? 'edit' : 'add')
+      if (submittingId) await updateScmSalesDocument(submittingId, cloneDeep(payload))
+      else await createScmSalesDocument(cloneDeep(payload))
+      if (revision !== openRevision) return false
+      emit('success', submittingId ? 'edit' : 'add')
       return true
     } catch {
       // API 边界已显示业务安全的错误，保留表单供用户修正。
@@ -2139,12 +2206,15 @@
   }
 
   async function handleOpen(options: OpenOptions): Promise<void> {
+    invalidateOpen()
+    const revision = openRevision
     preparing = true
     kind.value = options.kind
     recordId.value = options.copy ? undefined : options.record?.id
     tenantOptions.value = options.tenantOptions
     Object.assign(header, initialHeader(), options.record ?? {}, {
-      tenantId: options.record?.tenantId ?? options.effectiveTenantId ?? '',
+      tenantId:
+        options.record?.tenantId ?? options.effectiveTenantId ?? defaultWriteTenantId.value ?? '',
       documentNo: options.copy ? '' : (options.record?.documentNo ?? ''),
       documentTypeId: options.record?.documentTypeId ?? '',
       projectId: options.record?.projectId ?? '',
@@ -2222,6 +2292,7 @@
       })) ?? []
     activeTab.value = 'lines'
     await nextTick()
+    if (revision !== openRevision) return
     preparing = false
     await dialogRef.value?.handleOpen(options, {
       title: options.copy
@@ -2230,30 +2301,12 @@
           ? `编辑${config.value.title} · ${options.record.documentNo}`
           : `新增${config.value.title}`,
       confirmText: recordId.value ? '保存更改' : '创建单据',
-      loading: true,
-      loadingText: '正在加载单据选项…',
       onConfirm: handleSubmit,
-      onOpen: async (_openData, api) => {
+      onClose: invalidateOpen,
+      onOpen: () => {
         headerFormRef.value?.clearValidate()
         detailsFormRef.value?.clearValidate()
-        try {
-          await Promise.all(
-            [
-              'scmDiscountMode',
-              'scmPaymentPlanMode',
-              'scmPaymentType',
-              'scmTransportMode',
-              'mdmCurrency',
-              'scmTaxRate',
-              'commonContractClauseType'
-            ].map((code) => userStore.ensureDictLoaded(code))
-          )
-          await loadReferences(header.tenantId)
-        } catch {
-          ElMessage.warning('单据选项加载失败，请关闭弹窗后重试')
-        } finally {
-          api.setLoading(false)
-        }
+        return loadReferences(header.tenantId)
       },
       dialogProps: { closeOnClickModal: false }
     })
@@ -2263,6 +2316,7 @@
     () => header.tenantId,
     (tenantId, previous) => {
       if (preparing || tenantId === previous) return
+      openRevision += 1
       header.projectId = ''
       header.documentTypeId = ''
       header.customerId = ''

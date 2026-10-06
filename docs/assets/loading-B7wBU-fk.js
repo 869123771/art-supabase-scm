@@ -1,0 +1,1 @@
+import{Vi as e,Yi as t,pa as n}from"./sys-DMaf_PZ4.js";import{t as r}from"./scm-document-workspace-BUk6eAGZ.js";var i=t({name:`ScmLoading`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`loading`}))}});export{i as default};

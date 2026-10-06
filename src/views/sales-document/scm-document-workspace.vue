@@ -28,7 +28,7 @@
         header-actions-placement="workspace"
         :search-bar-props="{ span: 6, labelWidth: 82, showExpand: true }"
         :table-props="{
-          rowKey: displayMode === 'line' ? 'detailRowId' : 'id',
+          rowKey: getDocumentDetailRowKey,
           spanMethod: mergeDocumentCells,
           tableLayout: 'fixed',
           emptyText: `暂无${config.title}`,
@@ -83,7 +83,7 @@
   import { ElMessage, ElTag } from 'element-plus'
   import { startWorkflow } from '@/api/workflow'
   import { storeToRefs } from 'pinia'
-  import { pageInfoHandler } from '@/utils/table/table-utils'
+  import { buildSupabasePageRange } from '@/utils/supabase/pagination'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { useRouter } from 'vue-router'
   import ArtButtonMore, {
@@ -116,6 +116,7 @@
   import type { ColumnOption } from '@/types'
   import { formatCurrencyValue } from '@/utils/ui/format'
   import {
+    getDocumentDetailRowKey,
     expandDocumentLines,
     documentGroupSpan,
     loadAllDocumentPages,
@@ -1251,7 +1252,7 @@
   }
 
   async function fetchPage(query: ScmSalesDocumentQuery & { current: number; size: number }) {
-    const pageQuery = { ...query, ...pageInfoHandler(query) }
+    const pageQuery = { ...query, ...buildSupabasePageRange(query) }
     if (displayMode.value === 'document') {
       visibleRows.value = []
       return fetchScmSalesDocuments(props.kind, pageQuery)

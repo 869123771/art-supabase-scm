@@ -57,7 +57,7 @@
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
   import { useArtFeedback } from '@/hooks/core/useArtFeedback'
   import { loadAllDocumentPages } from '@/utils/business/document-detail-list'
-  import { pageInfoHandler } from '@/utils/table/table-utils'
+  import { buildSupabasePageRange } from '@/utils/supabase/pagination'
   import { useTenantScopeStore } from '@/store/modules/tenant-scope'
   import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
   import { useUserStore } from '@/store/modules/user'
@@ -67,6 +67,7 @@
     deleteQuoteCategory,
     fetchQuoteCategories,
     fetchQuoteExpenses,
+    fetchQuoteExpenseOptions,
     fetchScmProjectOptions,
     importQuoteCategories,
     type QuoteCategoryQuery,
@@ -315,7 +316,7 @@
     if (!rows.length) throw new Error('导入文件没有可用数据')
     const [projectsResult, expensesResult] = await Promise.all([
       fetchScmProjectOptions(tenantId),
-      fetchQuoteExpenses({ tenantId, enabled: true })
+      fetchQuoteExpenseOptions({ tenantId, enabled: true })
     ])
     const projects = projectsResult.data ?? []
     const expenses = expensesResult.data ?? []
@@ -387,7 +388,7 @@
   }
 
   function fetchPage(query: QuoteCategoryQuery & { current: number; size: number }) {
-    return fetchQuoteCategories({ ...query, ...pageInfoHandler(query) })
+    return fetchQuoteCategories({ ...query, ...buildSupabasePageRange(query) })
   }
 
   async function exportCategories(): Promise<Array<Record<string, unknown>>> {

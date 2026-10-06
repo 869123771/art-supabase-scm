@@ -1,5 +1,5 @@
 <template>
-  <ArtDrawer ref="drawerRef">
+  <ArtDrawer ref="drawerRef" @close="invalidateExpenses">
     <div class="flex min-w-0 flex-col gap-4">
       <ArtEntitySummary
         icon="ri:price-tag-2-line"
@@ -26,7 +26,8 @@
         :empty="!record.feeItems.length"
         empty-title="暂无附加费用"
         empty-description="此报价项仅按数量与单价计价。"
-        @retry="loadExpenses"
+        error-title="费用名称加载失败"
+        @retry="retryLoad"
       >
         <div class="flex flex-col divide-y divide-[var(--el-border-color-lighter)]">
           <div
@@ -57,7 +58,9 @@
   import ArtEntitySummary from '@/components/core/surfaces/art-entity-summary/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import { formatCompactNumberValue, formatCurrencyValue } from '@/utils/ui/format'
-  import { fetchQuoteExpenses, type ScmQuoteCategory, type ScmQuoteExpense } from '@scm/api'
+  import { useDetailRecord } from '@/hooks/core/useDetailRecord'
+  import { keyBy } from 'lodash-es'
+  import { fetchQuoteExpenseOptions, type ScmQuoteCategory, type ScmQuoteExpense } from '@scm/api'
 
   defineOptions({ name: 'ScmQuoteCategoryDetailDrawer' })
 
@@ -77,9 +80,18 @@
     createdAt: '',
     updatedAt: ''
   })
-  const expenses = ref<ScmQuoteExpense[]>([])
-  const feeLoading = ref(false)
-  const feeError = ref<string | null>(null)
+  const {
+    detail: expenses,
+    loading: feeLoading,
+    loadError: feeError,
+    openDetail,
+    loadDetail,
+    retryLoad
+  } = useDetailRecord<ScmQuoteExpense[]>(
+    (tenantId) => fetchQuoteExpenseOptions({ tenantId }),
+    '费用名称暂时无法加载，请重新加载'
+  )
+  const expensesById = computed(() => keyBy(expenses.value ?? [], 'id'))
 
   const descriptionItems: ArtDescriptionItem<ScmQuoteCategory>[] = [
     {
@@ -123,35 +135,26 @@
   ]
 
   function expenseName(id: string): string {
-    const expense = expenses.value.find((item) => item.id === id)
+    const expense = expensesById.value[id]
     return expense ? `${expense.expenseName}（${expense.expenseCode}）` : '费用定义已变更'
   }
 
-  async function loadExpenses(): Promise<void> {
-    if (!record.value.feeItems.length) return
-    feeLoading.value = true
-    feeError.value = null
-    try {
-      const response = await fetchQuoteExpenses({ tenantId: record.value.tenantId })
-      if (response.error) throw response.error
-      expenses.value = response.data ?? []
-    } catch {
-      feeError.value = '费用名称加载失败，请重试。'
-    } finally {
-      feeLoading.value = false
-    }
+  function invalidateExpenses(): void {
+    openDetail('')
   }
 
   async function handleOpen(value: ScmQuoteCategory): Promise<void> {
     record.value = value
-    expenses.value = []
+    openDetail(value.tenantId, [])
     await drawerRef.value?.handleOpen(value, {
       title: '查看报价项分类',
       subtitle: '核对项目、计价与附加费用。',
       size: 'lg',
-      showFooter: false
+      showFooter: false,
+      onOpen: async () => {
+        if (value.feeItems.length) await loadDetail(value.tenantId)
+      }
     })
-    void loadExpenses()
   }
 
   defineExpose({ handleOpen })

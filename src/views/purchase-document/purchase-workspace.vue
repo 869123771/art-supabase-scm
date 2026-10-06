@@ -1,6 +1,11 @@
 <template>
   <ArtPermissionGuard :permission="config.permissions.View" :resource-name="config.title">
     <div class="business-workspace-page art-full-height">
+      <MasterDeleteProcessingNotice
+        v-if="deleteContext.active"
+        :location-ready="Boolean(locatedDocumentId && locatedDocumentId === matchedDocumentId)"
+        action-hint="请核对关联采购单据，处理完成后返回原页面重新检查引用。"
+      />
       <BusinessWorkspaceHeader
         density="compact"
         :eyebrow="config.eyebrow"
@@ -27,12 +32,13 @@
         header-actions-placement="workspace"
         :search-bar-props="{ span: 6, labelWidth: 82, showExpand: true }"
         :table-props="{
-          rowKey: displayMode === 'line' ? 'detailRowId' : 'id',
+          rowKey: getDocumentDetailRowKey,
           spanMethod: mergeDocumentCells,
           tableLayout: 'fixed',
-          emptyText: `暂无${config.title}`,
-          emptyDescription:
-            isPlatformSuper && effectiveTenantId
+          emptyText: deleteContext.active ? '未找到可查看的目标采购单据' : `暂无${config.title}`,
+          emptyDescription: deleteContext.active
+            ? '请核对单据类型、租户范围和查看权限，可重试或清除定位。'
+            : isPlatformSuper && effectiveTenantId
               ? `当前租户暂无${config.title}。可新建单据，或在页头切换到其他业务租户。`
               : `暂无${config.title}。创建单据后可继续维护物料与状态。`
         }"
@@ -84,7 +90,9 @@
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import dayjs from 'dayjs'
   import { ElMessage } from 'element-plus'
-  import { useRouter } from 'vue-router'
+  import { useRoute, useRouter } from 'vue-router'
+  import { useMasterDataDeleteProcessingContext } from '@/hooks/core/useMasterDataDeleteProcessing'
+  import MasterDeleteProcessingNotice from '@/components/business/master-delete-processing-notice/index.vue'
   import { useAuth } from '@/hooks/core/useAuth'
   import ArtButtonMore, {
     type ButtonMoreItem
@@ -113,8 +121,9 @@
   import { fetchEmployeeSelectorList } from '@/api/integration/employees'
   import type { ColumnOption } from '@/types'
   import { formatCurrencyValue } from '@/utils/ui/format'
-  import { pageInfoHandler } from '@/utils/table/table-utils'
+  import { buildSupabasePageRange } from '@/utils/supabase/pagination'
   import {
+    getDocumentDetailRowKey,
     documentGroupSpan,
     expandDocumentLines,
     loadAllDocumentPages,
@@ -186,6 +195,23 @@
     }))
   )
   const tableRef = ref<ArtTableQueryExpose>()
+  const route = useRoute()
+  const deleteContext = useMasterDataDeleteProcessingContext()
+  const locatedDocumentId = computed(() =>
+    deleteContext.value.active && route.query.dependencyCode === 'scm_purchase_document'
+      ? deleteContext.value.recordId
+      : ''
+  )
+  const matchedDocumentId = ref('')
+  let locationRequestSequence = 0
+  watch(
+    [locatedDocumentId, () => deleteContext.value.active, effectiveTenantId, () => props.kind],
+    () => {
+      locationRequestSequence++
+      matchedDocumentId.value = ''
+      void tableRef.value?.refreshCreate()
+    }
+  )
   const dialogRef = ref<{
     handleOpen: (options: {
       kind: ScmPurchaseKind
@@ -1011,17 +1037,49 @@
   function handleSaved(mode: 'add' | 'edit') {
     void (mode === 'add' ? tableRef.value?.refreshCreate() : tableRef.value?.refreshUpdate())
   }
+  function createDocumentReader() {
+    const id = locatedDocumentId.value
+    const active = deleteContext.value.active
+    const tenantId = effectiveTenantId.value
+    const kind = props.kind
+    const sequence = ++locationRequestSequence
+    const assertContext = () => {
+      if (
+        id !== locatedDocumentId.value ||
+        active !== deleteContext.value.active ||
+        tenantId !== effectiveTenantId.value ||
+        kind !== props.kind
+      ) {
+        throw new Error('查询范围已变化，请在当前范围重新查询或导出')
+      }
+    }
+    const readDocuments = async (query: ScmPurchaseQuery) => {
+      assertContext()
+      if (active && !id) return { data: [], total: 0, error: null }
+      const result = await fetchScmPurchaseDocuments(
+        kind,
+        id
+          ? { from: query.from, to: query.to, documentId: id, tenantId: tenantId || undefined }
+          : { ...query, tenantId: tenantId || query.tenantId }
+      )
+      assertContext()
+      if (sequence === locationRequestSequence) {
+        matchedDocumentId.value = result.data?.some((row) => row.id === id) ? id : ''
+      }
+      return result
+    }
+    return { readDocuments, assertContext }
+  }
   async function fetchPage(query: ScmPurchaseQuery & { current: number; size: number }) {
-    const pageQuery = { ...query, ...pageInfoHandler(query) }
+    const { readDocuments, assertContext } = createDocumentReader()
+    const pageQuery = { ...query, ...buildSupabasePageRange(query) }
     if (displayMode.value === 'document') {
       visibleRows.value = []
-      return fetchScmPurchaseDocuments(props.kind, pageQuery)
+      return readDocuments(pageQuery)
     }
-    const documents = await loadAllDocumentPages(
-      (page: ScmPurchaseQuery) => fetchScmPurchaseDocuments(props.kind, page),
-      pageQuery
-    )
+    const documents = await loadAllDocumentPages(readDocuments, pageQuery)
     await loadUnitDisplayNames(documents.map((document) => document.tenantId))
+    assertContext()
     const rows = expandDocumentLines(
       documents,
       (document) => document.lines,
@@ -1032,10 +1090,8 @@
     return result
   }
   async function exportDocuments() {
-    const documents = await loadAllDocumentPages(
-      (page: ScmPurchaseQuery) => fetchScmPurchaseDocuments(props.kind, page),
-      search.value
-    )
+    const { readDocuments, assertContext } = createDocumentReader()
+    const documents = await loadAllDocumentPages(readDocuments, search.value)
     const rows: PurchaseListRow[] =
       displayMode.value === 'line'
         ? expandDocumentLines(
@@ -1046,6 +1102,7 @@
         : documents
     if (displayMode.value === 'line')
       await loadUnitDisplayNames(documents.map((document) => document.tenantId))
+    assertContext()
     return rows.map((row) => ({
       documentNo: row.documentNo,
       lineNo: row.detailLine?.lineNo,

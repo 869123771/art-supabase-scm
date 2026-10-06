@@ -157,6 +157,7 @@ export async function fetchScmSalesDocuments(
     .select(documentSelect, { count: 'exact' })
     .eq('kind', kind)
     .order('updated_at', { ascending: false })
+    .order('id')
     .range(from, to)
   if (keyword?.trim()) {
     const matches = await responseHandle<Array<{ id: string }>>(

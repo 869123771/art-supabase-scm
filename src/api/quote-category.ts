@@ -1,6 +1,7 @@
 import { useSupabase } from '@/hooks'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
 import { buildOrIlikeFilter } from '@/utils/supabase/search'
+import { fetchAllRangePages } from '@/utils/supabase'
 
 export interface QuoteCategoryFee {
   expenseId: string
@@ -64,6 +65,7 @@ export async function fetchQuoteCategories(query: QuoteCategoryQuery = {}) {
       }
     )
     .order('updated_at', { ascending: false })
+    .order('id')
     .range(from, to)
   if (keyword?.trim()) {
     const { data: projects } = await fetchScmProjectOptions(tenantId, keyword.trim())
@@ -79,22 +81,25 @@ export async function fetchQuoteCategories(query: QuoteCategoryQuery = {}) {
 }
 
 export async function fetchScmProjectOptions(tenantId?: string, keyword?: string) {
-  let request = supabase
-    .from('mdm_project')
-    .select(
-      'id,tenant_id,project_code,project_name,customer_id,customer:mdm_customer!mdm_project_customer_tenant_fk(customer_name,customerGroup:mdm_master_group!mdm_customer_group_tenant_fk(name))'
-    )
-    .eq('enabled', true)
-    .order('project_name')
-    .range(0, 999)
-  if (tenantId) request = request.eq('tenant_id', tenantId)
-  if (keyword) {
-    request = request.or(buildOrIlikeFilter(['project_code', 'project_name'], keyword))
-  }
-  return responseHandle<ScmProjectOption[]>(() => request, {
-    breakReturn: true,
-    showErrorMessage: true,
-    errorMessage: '项目列表加载失败，请稍后重试'
+  return fetchAllRangePages<ScmProjectOption>(async ({ from, to }) => {
+    let request = supabase
+      .from('mdm_project')
+      .select(
+        'id,tenant_id,project_code,project_name,customer_id,customer:mdm_customer!mdm_project_customer_tenant_fk(customer_name,customerGroup:mdm_master_group!mdm_customer_group_tenant_fk(name))'
+      )
+      .eq('enabled', true)
+      .order('project_name')
+      .order('id')
+      .range(from, to)
+    if (tenantId) request = request.eq('tenant_id', tenantId)
+    if (keyword) {
+      request = request.or(buildOrIlikeFilter(['project_code', 'project_name'], keyword))
+    }
+    return responseHandle<ScmProjectOption[]>(() => request, {
+      breakReturn: true,
+      showErrorMessage: true,
+      errorMessage: '项目列表加载失败，请稍后重试'
+    })
   })
 }
 

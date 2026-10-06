@@ -58,7 +58,7 @@
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
   import { useArtFeedback } from '@/hooks/core/useArtFeedback'
   import { loadAllDocumentPages } from '@/utils/business/document-detail-list'
-  import { pageInfoHandler } from '@/utils/table/table-utils'
+  import { buildSupabasePageRange } from '@/utils/supabase/pagination'
   import { useTenantScopeStore } from '@/store/modules/tenant-scope'
   import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
   import { useUserStore } from '@/store/modules/user'
@@ -361,7 +361,7 @@
   }
 
   function fetchPage(query: QuoteExpenseQuery & { current: number; size: number }) {
-    return fetchQuoteExpenses({ ...query, ...pageInfoHandler(query) })
+    return fetchQuoteExpenses({ ...query, ...buildSupabasePageRange(query) })
   }
 
   async function exportExpenses(): Promise<Array<Record<string, unknown>>> {

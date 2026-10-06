@@ -17,10 +17,17 @@
         />
         <p class="mt-2 text-xs text-[var(--art-gray-600)]">已选 {{ selectedLines.length }} 行</p>
       </ArtSectionCard>
-      <ArtSectionCard title="生产工单配置" subtitle="每条选中明细生成一张工单，项目从报价单带入。">
+      <ArtSectionCard
+        title="生产工单配置"
+        subtitle="每条选中明细生成一张工单，项目从报价单带入。"
+        :loading="loading"
+        :error="loadError"
+        @retry="retryLoad"
+      >
         <ArtForm
           ref="formRef"
-          v-model="form"
+          :model-value="form"
+          @update:model-value="replaceReactiveModel(form, $event)"
           :items="formItems"
           :rules="rules"
           :span="12"
@@ -35,6 +42,7 @@
 </template>
 
 <script setup lang="ts">
+  import { replaceReactiveModel } from '@/utils/form/model'
   import dayjs from 'dayjs'
   import { ElMessage, type FormRules } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
@@ -43,6 +51,7 @@
   import ArtTable from '@/components/core/tables/art-table/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
+  import { useDetailRecord } from '@/hooks/core/useDetailRecord'
   import type { ColumnOption } from '@/types'
   import { validateArtFormForSubmit } from '@/utils/form/validate-art-form'
   import {
@@ -60,7 +69,19 @@
   const dialogRef = ref<ArtDialogExpose<ScmSalesDocument>>()
   const formRef = ref<InstanceType<typeof ArtForm>>()
   const quotation = ref<ScmSalesDocument>()
-  const documentTypes = ref<ScmDocumentTypeOption[]>([])
+  const { detail, loading, loadError, openDetail, loadDetail, retryLoad } = useDetailRecord<
+    ScmDocumentTypeOption[]
+  >((tenantId) => fetchScmDocumentTypeOptions(tenantId, 'MesWorkOrder'), '工单类型加载失败，请重试')
+  const documentTypes = computed(() => detail.value ?? [])
+  let openRevision = 0
+  const route = useRoute()
+  watch(
+    () => route.fullPath,
+    () => {
+      openRevision += 1
+      openDetail('')
+    }
+  )
   const selectedLines = ref<ScmDocumentLine[]>([])
   const form = reactive<ScmQuotationWorkOrderConfig>({
     workOrderTypeId: '',
@@ -114,26 +135,31 @@
   }
 
   async function handleConfirm(): Promise<boolean> {
-    if (!quotation.value) return false
+    const source = quotation.value
+    const revision = openRevision
+    if (!source || loading.value || loadError.value) return false
     if (!selectedLines.value.length) {
       ElMessage.warning('请先选择报价明细')
       return false
     }
     try {
       if (!(await validateArtFormForSubmit(formRef.value))) return false
+      if (revision !== openRevision) return false
       if (form.plannedEndDate < form.plannedStartDate) {
         ElMessage.warning('计划完工日期不能早于计划开始日期')
         return false
       }
       await convertScmQuotationLinesToWorkOrders(
-        quotation.value.id,
+        source.id,
         selectedLines.value.map((line) => line.lineId),
-        form
+        { ...form }
       )
+      if (revision !== openRevision) return false
       emit('success')
       return true
     } catch (error) {
-      notifyFriendlyError(error, '生产工单生成失败，请检查报价状态、物料编码和工单类型后重试')
+      if (revision === openRevision)
+        notifyFriendlyError(error, '生产工单生成失败，请检查报价状态、物料编码和工单类型后重试')
       return false
     }
   }
@@ -144,6 +170,8 @@
       return
     }
     quotation.value = record
+    openRevision += 1
+    openDetail(record.tenantId)
     selectedLines.value = []
     Object.assign(form, {
       workOrderTypeId: '',
@@ -155,24 +183,21 @@
     await dialogRef.value?.handleOpen(record, {
       title: `转生产工单 · ${record.documentNo}`,
       confirmText: '执行生成',
-      loading: true,
-      loadingText: '正在加载工单类型…',
-      onOpen: async (_data, api) => {
-        api.setLoading(true)
-        try {
-          const response = await fetchScmDocumentTypeOptions(record.tenantId, 'MesWorkOrder')
-          documentTypes.value = response.data ?? []
-          form.workOrderTypeId = documentTypes.value.find((item) => item.isDefault)?.id ?? ''
-        } catch {
-          ElMessage.warning('工单类型加载失败，请关闭弹窗后重试')
-        } finally {
-          api.setLoading(false)
-        }
+      onOpen: () => loadDetail(record.tenantId),
+      onClose: () => {
+        openRevision += 1
+        openDetail('')
+        quotation.value = undefined
       },
       onConfirm: handleConfirm,
       dialogProps: { closeOnClickModal: false }
     })
   }
+
+  watch(detail, (types) => {
+    if (types && !form.workOrderTypeId)
+      form.workOrderTypeId = types.find((item) => item.isDefault)?.id ?? ''
+  })
 
   defineExpose({ handleOpen })
 </script>
