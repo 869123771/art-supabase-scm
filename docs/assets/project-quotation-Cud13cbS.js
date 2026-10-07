@@ -1,0 +1,1 @@
+import{Yi as e,ra as t,xa as n}from"./index-Br1WZPQC.js";import{t as r}from"./scm-document-workspace-Bb321Oym.js";var i=t({name:`ScmProjectQuotation`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`project_quotation`}))}});export{i as default};

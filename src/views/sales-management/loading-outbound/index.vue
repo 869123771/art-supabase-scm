@@ -462,6 +462,7 @@
             multiple
             filterable
             collapse-tags
+            collapse-tags-tooltip
             class="w-full!"
             placeholder="逐件参选 SN"
             aria-label="出库序列号"
