@@ -1,15 +1,17 @@
 <template>
-  <ArtDialog ref="dialogRef" size="lg">
+  <ArtDialog ref="dialogRef" size="xl">
     <div class="flex min-w-0 flex-col gap-4">
       <ArtSectionCard
         title="待生成报价明细"
-        :subtitle="`将为以下 ${pendingLines.length} 行生成独立物料编码，并返填到报价明细。`"
+        :subtitle="`共 ${pendingLines.length} 行待生成。选择本批明细；各业务单位默认等于基本单位，可逐行修改。`"
       >
         <ArtTable
+          ref="lineTableRef"
           :data="pendingLines"
           :columns="lineColumns"
           :pagination="false"
-          row-key="lineId"
+          row-key="key"
+          @selection-change="selectedLines = $event"
           :max-height="240"
           class="w-full!"
         />
@@ -49,9 +51,19 @@
   </ArtDialog>
 </template>
 
-<script setup lang="ts">
+<script setup lang="tsx">
+  import { toNameCodeOption } from '@/utils/form/option'
+
+  import {
+    quotationActionLines,
+    selectedQuotationDocuments,
+    normalizeQuotationSelection,
+    type QuotationActionLine
+  } from '../quotation-selection'
+  import type { ArtTableExpose } from '@/components/core/tables/art-table/index.vue'
+  import { computed, reactive, ref, watch } from 'vue'
   import { replaceReactiveModel } from '@/utils/form/model'
-  import { ElMessage, type FormRules } from 'element-plus'
+  import { ElMessage, ElSelect, ElOption, type FormRules } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
   import ArtForm, { type FormItem } from '@/components/core/forms/art-form/index.vue'
@@ -65,8 +77,8 @@
   import { validateArtFormForSubmit } from '@/utils/form/validate-art-form'
   import {
     fetchScmEngineeringReferenceOptions,
-    generateScmQuotationMaterials,
-    type ScmDocumentLine,
+    batchScmQuotationAction,
+    type ScmQuotationMaterialLineConfig,
     type ScmEngineeringReferenceOptions,
     type ScmQuotationMaterialConfig,
     type ScmSalesDocument
@@ -79,6 +91,18 @@
   const dialogRef = ref<ArtDialogExpose<ScmSalesDocument>>()
   const formRef = ref<InstanceType<typeof ArtForm>>()
   const quotation = ref<ScmSalesDocument>()
+  const quotations = ref<ScmSalesDocument[]>([])
+  type MaterialRow = QuotationActionLine & ScmQuotationMaterialLineConfig
+  const pendingLines = ref<MaterialRow[]>([])
+  const selectedLines = ref<MaterialRow[]>([])
+  const lineTableRef = ref<ArtTableExpose>()
+  const unitKeys = [
+    'purchaseUnitId',
+    'salesUnitId',
+    'inventoryUnitId',
+    'productionUnitId',
+    'costUnitId'
+  ] as const
   const { detail, loading, loadError, openDetail, loadDetail, retryLoad } =
     useDetailRecord<ScmEngineeringReferenceOptions>(async (tenantId) => {
       await userStore.ensureDictLoaded('mdmMaterialSource')
@@ -110,12 +134,51 @@
     codeRuleId: '',
     imageUrls: []
   })
-  const pendingLines = computed(
-    () => quotation.value?.lines.filter((line) => !line.materialId) ?? []
-  )
-  const lineColumns: ColumnOption<ScmDocumentLine>[] = [
-    { prop: 'lineNo', label: '行号', width: 80 },
+  function changeBaseUnit(row: MaterialRow, previous: string) {
+    for (const key of unitKeys) if (!row[key] || row[key] === previous) row[key] = row.baseUnitId
+  }
+  const unitColumns: Array<{ key: (typeof unitKeys)[number] | 'baseUnitId'; label: string }> = [
+    { key: 'baseUnitId', label: '基本单位' },
+    { key: 'purchaseUnitId', label: '采购单位' },
+    { key: 'salesUnitId', label: '销售单位' },
+    { key: 'inventoryUnitId', label: '库存单位' },
+    { key: 'productionUnitId', label: '生产单位' },
+    { key: 'costUnitId', label: '成本单位' }
+  ]
+  const lineColumns: ColumnOption<MaterialRow>[] = [
+    { type: 'selection', width: 48 },
+    { prop: 'documentNo', label: '报价单号', minWidth: 165 },
+    { prop: 'lineNo', label: '行号', width: 75 },
     { prop: 'materialDescription', label: '物料描述', minWidth: 210, showOverflowTooltip: true },
+    { prop: 'specification', label: '规格型号', minWidth: 150, showOverflowTooltip: true },
+    { prop: 'brand', label: '品牌', minWidth: 120, showOverflowTooltip: true },
+    ...unitColumns.map(({ key, label }): ColumnOption<MaterialRow> => ({
+      prop: key,
+      label,
+      minWidth: 135,
+      rules: {
+        validator: ({ row }) =>
+          !selectedLines.value.some((line) => line.key === row.key) || Boolean(row[key]),
+        message: `请选择${label}`
+      },
+      formatter: (row) => {
+        const previous = row.baseUnitId
+        return (
+          <ElSelect
+            v-model={row[key]}
+            filterable
+            aria-label={`第${row.lineNo}行${label}`}
+            onChange={() => {
+              if (key === 'baseUnitId') changeBaseUnit(row, previous)
+            }}
+          >
+            {references.value.units.map((unit) => (
+              <ElOption key={unit.id} value={unit.id} label={unit.name} />
+            ))}
+          </ElSelect>
+        )
+      }
+    })),
     { prop: 'quantity', label: '数量', width: 100, align: 'right' }
   ]
   const formItems = computed<FormItem[]>(() => [
@@ -146,16 +209,13 @@
       key: 'categoryId',
       type: 'select',
       props: {
-        options: references.value.categories.map((item) => ({
-          label: `${item.name} · ${item.code}`,
-          value: item.id
-        })),
+        options: references.value.categories.map(toNameCodeOption),
         filterable: true,
         placeholder: '请选择物料分类'
       }
     },
     {
-      label: '基本单位',
+      label: '缺省基本单位',
       key: 'baseUnitId',
       type: 'select',
       props: {
@@ -184,7 +244,6 @@
     materialTypeId: [{ required: true, message: '请选择物料类型', trigger: 'change' }],
     materialSource: [{ required: true, message: '请选择物料来源', trigger: 'change' }],
     categoryId: [{ required: true, message: '请选择物料分类', trigger: 'change' }],
-    baseUnitId: [{ required: true, message: '请选择基本单位', trigger: 'change' }],
     codeRuleId: [{ required: true, message: '请选择编码策略', trigger: 'change' }]
   }
 
@@ -192,13 +251,31 @@
     const source = quotation.value
     const revision = openRevision
     if (!source || loading.value || loadError.value) return false
+    if (!selectedLines.value.length) {
+      ElMessage.warning('请先选择本批待生成明细')
+      return false
+    }
     try {
+      if ((await lineTableRef.value?.validate())?.valid === false) return false
       if (!(await validateArtFormForSubmit(formRef.value))) return false
       if (revision !== openRevision) return false
-      await generateScmQuotationMaterials(
-        source.id,
-        pendingLines.value.map((line) => line.lineId),
-        { ...form, imageUrls: [...form.imageUrls] }
+      await batchScmQuotationAction(
+        'materials',
+        selectedQuotationDocuments(quotations.value, selectedLines.value),
+        {
+          ...form,
+          imageUrls: [...form.imageUrls],
+          lineConfigs: selectedLines.value.map((row) => ({
+            quotationId: row.quotationId,
+            lineId: row.lineId,
+            baseUnitId: row.baseUnitId,
+            purchaseUnitId: row.purchaseUnitId,
+            salesUnitId: row.salesUnitId,
+            inventoryUnitId: row.inventoryUnitId,
+            productionUnitId: row.productionUnitId,
+            costUnitId: row.costUnitId
+          }))
+        }
       )
       if (revision !== openRevision) return false
       emit('success')
@@ -210,7 +287,26 @@
     }
   }
 
-  async function handleOpen(record: ScmSalesDocument): Promise<void> {
+  async function handleOpen(input: ScmSalesDocument | ScmSalesDocument[]): Promise<void> {
+    const records = normalizeQuotationSelection(input)
+    const record = records[0]
+    if (!record || new Set(records.map((item) => item.tenantId)).size !== 1) {
+      ElMessage.warning('请按租户分别选择报价单')
+      return
+    }
+    quotations.value = records
+    selectedLines.value = []
+    pendingLines.value = quotationActionLines(records)
+      .filter((line) => !line.materialId)
+      .map((line) => ({
+        ...line,
+        baseUnitId: '',
+        purchaseUnitId: '',
+        salesUnitId: '',
+        inventoryUnitId: '',
+        productionUnitId: '',
+        costUnitId: ''
+      }))
     if (record.status !== 'draft' || !record.lines.some((line) => !line.materialId)) {
       ElMessage.warning('请选择有未编码明细的报价草稿')
       return
@@ -227,7 +323,7 @@
       imageUrls: []
     })
     await dialogRef.value?.handleOpen(record, {
-      title: `生成物料编码 · ${record.documentNo}`,
+      title: `生成物料编码 · ${records.length} 张报价`,
       confirmText: '执行生成',
       onOpen: () => loadDetail(record.tenantId),
       onClose: () => {
@@ -245,6 +341,15 @@
     form.materialTypeId ||= options.materialTypes.find((item) => item.name === '半成品')?.id ?? ''
     form.categoryId ||= options.categories.find((item) => item.name === '配件')?.id ?? ''
     form.baseUnitId ||= options.units.find((item) => item.name === '件')?.id ?? ''
+    for (const row of pendingLines.value) {
+      if (!row.baseUnitId)
+        row.baseUnitId =
+          options.units.find(
+            (unit) =>
+              unit.id === row.baseUnit || unit.code === row.baseUnit || unit.name === row.baseUnit
+          )?.id || form.baseUnitId
+      changeBaseUnit(row, '')
+    }
     form.codeRuleId ||=
       options.codeRules.find((item) => item.name.includes('半成品'))?.id ??
       options.codeRules[0]?.id ??
@@ -255,5 +360,15 @@
           ?.value ?? 'self_made'
       )
   })
+  watch(
+    () => form.baseUnitId,
+    (value) => {
+      for (const row of pendingLines.value)
+        if (!row.baseUnitId) {
+          row.baseUnitId = value
+          changeBaseUnit(row, '')
+        }
+    }
+  )
   defineExpose({ handleOpen })
 </script>

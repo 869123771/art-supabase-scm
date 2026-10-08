@@ -340,7 +340,9 @@ export async function generateScmSalesContract(projectQuotationId: string) {
 export async function convertScmStandardQuotation(
   quotationId: string,
   targetKind: ScmQuotationConversionTarget,
-  supplierId?: string | null
+  supplierId?: string | null,
+  lines?: Array<{ lineId: string; quantity: number }>,
+  requestId?: string
 ) {
   return responseHandle<ScmQuotationConversionResult>(
     () =>
@@ -348,16 +350,59 @@ export async function convertScmStandardQuotation(
         ? supabase.rpc('scm_convert_standard_quotation_to_contract', {
             p_quotation_id: quotationId
           })
-        : supabase.rpc('scm_convert_standard_quotation', {
-            quotation_id: quotationId,
-            target_kind: targetKind,
-            supplier_id: supplierId ?? null
-          }),
+        : lines && requestId
+          ? supabase.rpc('scm_convert_quotation_lines', {
+              quotation_id: quotationId,
+              target_kind: targetKind,
+              requested_lines: keysToSnakeDeep(lines),
+              request_id: requestId,
+              supplier_id: supplierId ?? null
+            })
+          : supabase.rpc('scm_convert_standard_quotation', {
+              quotation_id: quotationId,
+              target_kind: targetKind,
+              supplier_id: supplierId ?? null
+            }),
     {
       showMessage: true,
       breakReturn: true,
       message: '下游单据草稿已生成',
       errorMessage: '转单失败，请检查报价状态、物料编码和下游单据权限'
+    }
+  )
+}
+
+export async function fetchScmQuotationConversionQuantities(quotationId: string) {
+  return responseHandle<import('./sales-document.types').ScmQuotationConversionQuantity[]>(
+    () => supabase.rpc('scm_quotation_conversion_quantities', { p_quotation_id: quotationId }),
+    { breakReturn: true, showErrorMessage: false }
+  )
+}
+
+export async function batchScmQuotationAction(
+  action: 'materials' | 'work_orders' | 'bom' | 'delete_lines' | 'delete_documents',
+  quotations: Array<Pick<ScmSalesDocument, 'id' | 'lines'>>,
+  config:
+    | ScmQuotationMaterialConfig
+    | ScmQuotationWorkOrderConfig
+    | { parentMaterialId: string }
+    | Record<string, never>
+) {
+  return responseHandle<Array<{ quotationId: string; result: unknown }>>(
+    () =>
+      supabase.rpc('scm_batch_quotation_action', {
+        p_action: action,
+        p_groups: quotations.map((quote) => ({
+          quotation_id: quote.id,
+          line_ids: quote.lines.map((line) => line.lineId)
+        })),
+        p_config: keysToSnakeDeep(config)
+      }),
+    {
+      breakReturn: true,
+      showMessage: true,
+      message: '所选报价处理完成',
+      errorMessage: '报价处理失败，请核对状态、明细和权限后重试'
     }
   )
 }
@@ -564,7 +609,7 @@ export async function fetchScmMaterialOptions(tenantId?: string, materialIds?: s
     let request = supabase
       .from('mdm_material')
       .select(
-        'id,tenant_id,material_code,material_name,description,specification_model,basic_unit,material_source,brand,manufacturer,base_unit_id,purchase_unit_id,sales_unit_id,inventory_unit_id,auxiliary_unit_id,auxiliary_unit_2_id,unit_conversions,batch_management_enabled,serial_management_enabled,batch_rule_id,materialCategory:mdm_material_category!smis_material_category_fkey(category_name),materialType:mdm_material_type!mdm_material_type_fkey(type_name),baseUnitRecord:mdm_unit_of_measure!mdm_material_base_unit_fkey(unit_name),purchaseUnit:mdm_unit_of_measure!mdm_material_purchase_unit_id_fkey(unit_name),salesUnit:mdm_unit_of_measure!mdm_material_sales_unit_id_fkey(unit_name),inventoryUnit:mdm_unit_of_measure!mdm_material_inventory_unit_id_fkey(unit_name),auxiliaryUnit:mdm_unit_of_measure!mdm_material_aux_unit_fkey(unit_name),auxiliaryUnit2:mdm_unit_of_measure!mdm_material_aux_unit_2_fkey(unit_name)'
+        'id,tenant_id,category_id,material_code,material_name,description,specification_model,basic_unit,material_source,brand,manufacturer,base_unit_id,purchase_unit_id,sales_unit_id,inventory_unit_id,auxiliary_unit_id,auxiliary_unit_2_id,unit_conversions,batch_management_enabled,serial_management_enabled,batch_rule_id,materialCategory:mdm_material_category!smis_material_category_fkey(category_name),materialType:mdm_material_type!mdm_material_type_fkey(type_name),baseUnitRecord:mdm_unit_of_measure!mdm_material_base_unit_fkey(unit_name),purchaseUnit:mdm_unit_of_measure!mdm_material_purchase_unit_id_fkey(unit_name),salesUnit:mdm_unit_of_measure!mdm_material_sales_unit_id_fkey(unit_name),inventoryUnit:mdm_unit_of_measure!mdm_material_inventory_unit_id_fkey(unit_name),auxiliaryUnit:mdm_unit_of_measure!mdm_material_aux_unit_fkey(unit_name),auxiliaryUnit2:mdm_unit_of_measure!mdm_material_aux_unit_2_fkey(unit_name)'
       )
       .order('material_name')
       .order('id')
@@ -581,6 +626,7 @@ export async function fetchScmMaterialOptions(tenantId?: string, materialIds?: s
         specificationModel: string | null
         brand: string | null
         manufacturer: string | null
+        categoryId: string | null
         materialCategory: { categoryName: string } | null
         materialType: { typeName: string } | null
         basicUnit: string | null
@@ -617,6 +663,8 @@ export async function fetchScmMaterialOptions(tenantId?: string, materialIds?: s
     id: row.id,
     tenantId: row.tenantId,
     materialCode: row.materialCode,
+    materialName: row.materialName,
+    categoryId: row.categoryId,
     materialDescription: row.description || row.materialName,
     specification: row.specificationModel,
     brand: row.brand,

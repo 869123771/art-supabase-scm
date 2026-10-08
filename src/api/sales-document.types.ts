@@ -120,6 +120,24 @@ export interface ScmQuotationMaterialConfig {
   baseUnitId: string
   codeRuleId: string
   imageUrls: string[]
+  lineConfigs?: ScmQuotationMaterialLineConfig[]
+}
+
+export interface ScmQuotationMaterialLineConfig {
+  quotationId?: string
+  lineId: string
+  baseUnitId: string
+  purchaseUnitId: string
+  salesUnitId: string
+  inventoryUnitId: string
+  productionUnitId: string
+  costUnitId: string
+}
+
+export interface ScmQuotationConversionQuantity {
+  targetKind: ScmQuotationConversionTarget
+  lineId: string
+  quantity: number
 }
 
 export interface ScmQuotationWorkOrderConfig {
@@ -307,6 +325,8 @@ export interface ScmMaterialOption {
   id: string
   tenantId: string
   materialCode: string
+  materialName?: string
+  categoryId?: string | null
   materialDescription: string
   specification?: string | null
   brand?: string | null

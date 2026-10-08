@@ -59,7 +59,7 @@ const salesQuotation: ScmDocumentConfig = {
     Expire: 'ScmSalesQuotationDoc:Expire'
   },
   title: '销售报价单',
-  description: '统一录入标准产品与项目工程报价；工程数据由本单手填或批量导入。',
+  description: '维护标准产品报价，支持按明细分批建档与转单。',
   icon: 'ri:file-list-3-line',
   eyebrow: 'SALES QUOTATIONS',
   numberLabel: '报价单号',
@@ -97,7 +97,7 @@ const projectQuotation: ScmDocumentConfig = {
     GenerateContract: 'ScmProjectQuotation:GenerateContract',
     GeneratePlan: 'ScmProjectQuotation:GeneratePlan'
   },
-  title: '项目报价',
+  title: '项目报价单',
   description: '由销售报价单生成；提交时按来源报价的配置联动项目、物料编码与 BOM。',
   icon: 'ri:briefcase-4-line',
   eyebrow: 'PROJECT QUOTATIONS',

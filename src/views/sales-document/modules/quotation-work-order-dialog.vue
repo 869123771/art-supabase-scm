@@ -9,7 +9,7 @@
           :data="availableLines"
           :columns="lineColumns"
           :pagination="false"
-          row-key="lineId"
+          row-key="key"
           :max-height="300"
           class="w-full!"
           empty-text="暂无已编码的报价明细"
@@ -42,6 +42,13 @@
 </template>
 
 <script setup lang="ts">
+  import { computed, reactive, ref, watch } from 'vue'
+  import {
+    quotationActionLines,
+    selectedQuotationDocuments,
+    normalizeQuotationSelection,
+    type QuotationActionLine
+  } from '../quotation-selection'
   import { replaceReactiveModel } from '@/utils/form/model'
   import dayjs from 'dayjs'
   import { ElMessage, type FormRules } from 'element-plus'
@@ -55,9 +62,8 @@
   import type { ColumnOption } from '@/types'
   import { validateArtFormForSubmit } from '@/utils/form/validate-art-form'
   import {
-    convertScmQuotationLinesToWorkOrders,
+    batchScmQuotationAction,
     fetchScmDocumentTypeOptions,
-    type ScmDocumentLine,
     type ScmDocumentTypeOption,
     type ScmQuotationWorkOrderConfig,
     type ScmSalesDocument
@@ -69,6 +75,7 @@
   const dialogRef = ref<ArtDialogExpose<ScmSalesDocument>>()
   const formRef = ref<InstanceType<typeof ArtForm>>()
   const quotation = ref<ScmSalesDocument>()
+  const quotations = ref<ScmSalesDocument[]>([])
   const { detail, loading, loadError, openDetail, loadDetail, retryLoad } = useDetailRecord<
     ScmDocumentTypeOption[]
   >((tenantId) => fetchScmDocumentTypeOptions(tenantId, 'MesWorkOrder'), '工单类型加载失败，请重试')
@@ -82,18 +89,19 @@
       openDetail('')
     }
   )
-  const selectedLines = ref<ScmDocumentLine[]>([])
+  const selectedLines = ref<QuotationActionLine[]>([])
   const form = reactive<ScmQuotationWorkOrderConfig>({
     workOrderTypeId: '',
     constructionNo: '',
     plannedStartDate: dayjs().format('YYYY-MM-DD'),
     plannedEndDate: ''
   })
-  const availableLines = computed(
-    () => quotation.value?.lines.filter((line) => line.materialId) ?? []
+  const availableLines = computed(() =>
+    quotationActionLines(quotations.value).filter((line) => line.materialId)
   )
-  const lineColumns: ColumnOption<ScmDocumentLine>[] = [
+  const lineColumns: ColumnOption<QuotationActionLine>[] = [
     { type: 'selection', width: 48, fixed: 'left' },
+    { prop: 'documentNo', label: '报价单号', minWidth: 160 },
     { prop: 'lineNo', label: '行号', width: 78 },
     { prop: 'materialCode', label: '物料编码', minWidth: 150, showOverflowTooltip: true },
     { prop: 'materialDescription', label: '物料描述', minWidth: 190, showOverflowTooltip: true },
@@ -149,9 +157,9 @@
         ElMessage.warning('计划完工日期不能早于计划开始日期')
         return false
       }
-      await convertScmQuotationLinesToWorkOrders(
-        source.id,
-        selectedLines.value.map((line) => line.lineId),
+      await batchScmQuotationAction(
+        'work_orders',
+        selectedQuotationDocuments(quotations.value, selectedLines.value),
         { ...form }
       )
       if (revision !== openRevision) return false
@@ -164,7 +172,15 @@
     }
   }
 
-  async function handleOpen(record: ScmSalesDocument): Promise<void> {
+  async function handleOpen(input: ScmSalesDocument | ScmSalesDocument[]): Promise<void> {
+    const records = normalizeQuotationSelection(input)
+    const record = records[0]
+    if (!record || new Set(records.map((item) => item.tenantId)).size !== 1) {
+      ElMessage.warning('请按租户分别选择报价单')
+      return
+    }
+    quotations.value = records
+    selectedLines.value = []
     if (record.status !== 'effective' || !record.lines.some((line) => line.materialId)) {
       ElMessage.warning('请选择已审批通过且有物料编码的报价单')
       return
@@ -178,10 +194,10 @@
       constructionNo: '',
       plannedStartDate: dayjs().format('YYYY-MM-DD'),
       plannedEndDate: '',
-      projectName: record.project?.projectName ?? record.details.plannedProjectName ?? ''
+      projectName: records.length > 1 ? '随各报价单带入' : (record.project?.projectName ?? '')
     })
     await dialogRef.value?.handleOpen(record, {
-      title: `转生产工单 · ${record.documentNo}`,
+      title: `转生产工单 · ${records.length} 张报价`,
       confirmText: '执行生成',
       onOpen: () => loadDetail(record.tenantId),
       onClose: () => {

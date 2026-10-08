@@ -6,10 +6,18 @@
         v-if="referencesLoading || referenceError"
         :loading="referencesLoading"
         :error="referenceError"
+        loading-mode="skeleton"
         error-title="单据选项加载失败"
         :min-height="96"
         @retry="loadReferences(header.tenantId)"
-      />
+      >
+        <template #loading>
+          <p role="status" class="text-sm text-[var(--art-gray-600)]">
+            正在读取单据类型、项目、客户与物料选项，请稍候…
+          </p>
+          <ElSkeleton animated :rows="1" class="mt-3" />
+        </template>
+      </ArtAsyncState>
       <ArtSectionCard title="单据基本信息" subtitle="单据编号、项目和客户确定此单据的业务归属。">
         <ArtForm
           ref="headerFormRef"
@@ -93,32 +101,7 @@
               >
             </div>
           </template>
-          <template #quotationScene>
-            <ElSegmented
-              v-model="details.quotationScene"
-              :options="scmQuotationBusinessTypeOptions"
-              :disabled="Boolean(recordId)"
-              aria-label="报价场景"
-            />
-          </template>
         </ArtForm>
-      </ArtSectionCard>
-
-      <ArtSectionCard
-        v-if="kind === 'sales_quotation' && details.quotationScene === 'project'"
-        title="工程报价联动"
-        subtitle="本销售报价是唯一数据源；生成项目报价并提交时，按本单设置创建项目、物料与 BOM 草稿。"
-      >
-        <ArtForm
-          :model-value="details"
-          @update:model-value="replaceReactiveModel(details, $event)"
-          :items="automationItems"
-          :span="12"
-          :gutter="20"
-          label-width="140px"
-          :show-reset="false"
-          :show-submit="false"
-        />
       </ArtSectionCard>
 
       <ArtSectionCard
@@ -148,7 +131,7 @@
           name="lines"
         >
           <ArtSectionCard
-            v-if="kind === 'sales_quotation' && details.quotationScene !== 'project'"
+            v-if="kind === 'sales_quotation'"
             title="报价明细"
             subtitle="标准报价 · 填写未税或含税单价，系统同步计算金额与税额。"
           >
@@ -209,10 +192,7 @@
             />
           </ArtSectionCard>
           <ArtSectionCard
-            v-if="
-              (kind !== 'sales_quotation' && kind !== 'sales_contract' && kind !== 'sales_order') ||
-              (kind === 'sales_quotation' && details.quotationScene === 'project')
-            "
+            v-if="kind !== 'sales_quotation' && kind !== 'sales_contract' && kind !== 'sales_order'"
             :title="
               kind === 'shipping_notice' ? '发货明细' : kind === 'loading' ? '装车明细' : '物料明细'
             "
@@ -229,8 +209,6 @@
             <QuotationLineTable
               ref="quotationLineTableRef"
               v-model:lines="lines"
-              :quotation="kind === 'sales_quotation'"
-              :engineering="kind === 'sales_quotation' && details.quotationScene === 'project'"
               :operational="kind === 'shipping_notice' || kind === 'loading'"
               :shipping="kind === 'shipping_notice'"
               :loading="kind === 'loading'"
@@ -628,7 +606,6 @@
   import { replaceReactiveModel } from '@/utils/form/model'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { cloneDeep, omit } from 'lodash-es'
-  import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import dayjs from 'dayjs'
   import {
     ElCheckbox,
@@ -693,7 +670,6 @@
   } from '../quotation-pricing'
   import QuotationLineTable from './quotation-line-table.vue'
 
-  const scmQuotationBusinessTypeOptions = useDictionaryOptions('scmQuotationBusinessType')
   import '../quotation-summary-table.css'
 
   defineOptions({ name: 'ScmDocumentDialog' })
@@ -911,8 +887,7 @@
     const subtotal = lines.value.reduce((sum, line) => sum + lineAmount(line), 0)
     const feeTotal = fees.value.reduce((sum, fee) => sum + Number(fee.amount || 0), 0)
     const projectExtras =
-      kind.value === 'project_quotation' ||
-      (kind.value === 'sales_quotation' && details.quotationScene === 'project')
+      kind.value === 'project_quotation'
         ? Number(details.packageFee || 0) + Number(details.transportFee || 0)
         : 0
     const taxTotal =
@@ -953,22 +928,17 @@
     projectId: [
       {
         validator: (_rule, value, callback) => {
-          if (
-            value ||
-            (kind.value === 'sales_quotation' &&
-              details.quotationScene === 'project' &&
-              details.autoCreateProject &&
-              details.plannedProjectName?.trim()) ||
-            (kind.value === 'project_quotation' && header.sourceId)
-          )
-            callback()
-          else callback(new Error('请选择项目；工程报价可启用自动建项目并填写项目名称'))
+          if (value || (kind.value === 'project_quotation' && header.sourceId)) callback()
+          else callback(new Error('请选择项目'))
         },
         trigger: 'change'
       }
     ],
     customerId: [{ required: true, message: '请选择客户', trigger: 'change' }],
-    documentTypeId: [{ required: true, message: '请选择单据类型', trigger: 'change' }],
+    documentTypeId:
+      kind.value === 'sales_order'
+        ? []
+        : [{ required: true, message: '请选择单据类型', trigger: 'change' }],
     documentDate: [{ required: true, message: '请选择单据日期', trigger: 'change' }]
   }))
 
@@ -990,11 +960,7 @@
     return rules
   })
 
-  const activeDetailFields = computed(() =>
-    kind.value === 'sales_quotation' && details.quotationScene === 'project'
-      ? scmDocumentConfigs.project_quotation.fields
-      : config.value.fields
-  )
+  const activeDetailFields = computed(() => config.value.fields)
 
   const headerItems = computed<FormItem[]>(() => [
     ...(shouldExposeTenantField.value
@@ -1173,21 +1139,6 @@
           } as FormItem
         ]
       : []),
-    ...(kind.value === 'sales_quotation'
-      ? [
-          {
-            label: '报价场景',
-            key: 'quotationScene',
-            type: 'slot',
-            span: 24,
-            props: {
-              options: scmQuotationBusinessTypeOptions,
-              disabled: Boolean(recordId.value),
-              placeholder: '请选择报价场景'
-            }
-          } as FormItem
-        ]
-      : []),
     ...activeDetailFields.value.map((field): FormItem => ({
       label: field.label,
       key: field.key,
@@ -1233,56 +1184,6 @@
     }))
   ])
 
-  const automationItems = computed<FormItem[]>(() => [
-    { label: '自动创建项目', key: 'autoCreateProject', type: 'switch' },
-    { label: '自动创建物料', key: 'autoCreateMaterials', type: 'switch' },
-    { label: '自动搭建 BOM', key: 'autoBuildBom', type: 'switch' },
-    ...(details.autoCreateMaterials || details.autoBuildBom
-      ? ([
-          {
-            label: '物料分类',
-            key: 'materialCategoryId',
-            type: 'select',
-            props: {
-              options: engineeringReferences.categories.map((item) => ({
-                label: `${item.name} · ${item.code}`,
-                value: item.id
-              })),
-              filterable: true,
-              placeholder: '请选择物料分类'
-            }
-          },
-          {
-            label: '默认基本单位',
-            key: 'baseUnitId',
-            type: 'select',
-            props: {
-              options: engineeringReferences.units.map((item) => ({
-                label: `${item.name} · ${item.code}`,
-                value: item.id
-              })),
-              filterable: true,
-              placeholder: '请选择单位'
-            }
-          },
-          {
-            label: '物料编码规则',
-            key: 'materialCodeRuleId',
-            type: 'select',
-            span: 24,
-            props: {
-              options: engineeringReferences.codeRules.map((item) => ({
-                label: `${item.name} · ${item.code}`,
-                value: item.id
-              })),
-              filterable: true,
-              placeholder: '请选择编码规则'
-            }
-          }
-        ] as FormItem[])
-      : [])
-  ])
-
   async function loadReferences(tenantId: string): Promise<void> {
     const revision = ++referenceRevision
     referenceError.value = null
@@ -1306,6 +1207,12 @@
       return
     }
     referencesLoading.value = true
+    const timeout = window.setTimeout(() => {
+      if (revision !== referenceRevision) return
+      referenceRevision += 1
+      referencesLoading.value = false
+      referenceError.value = new Error('关联资料读取超时，请重新加载；已填写内容会保留')
+    }, 30_000)
     try {
       await Promise.all(
         [
@@ -1385,8 +1292,7 @@
           return ['approved', 'fulfilling'].includes(item.status)
         if (config.value.sourceKind === 'sales_contract') return item.status === 'effective'
         if (config.value.sourceKind === 'project_quotation') return item.status === 'effective'
-        if (kind.value === 'project_quotation')
-          return item.status === 'effective' && item.details.quotationScene === 'project'
+        if (kind.value === 'project_quotation') return item.status === 'effective'
         return item.status === 'effective'
       })
       if (engineering?.data) Object.assign(engineeringReferences, engineering.data)
@@ -1394,6 +1300,7 @@
       if (revision === referenceRevision)
         referenceError.value = new Error('关联主数据加载失败，请重试；已填写内容会保留', { cause })
     } finally {
+      window.clearTimeout(timeout)
       if (revision === referenceRevision) referencesLoading.value = false
     }
   }
@@ -2021,31 +1928,6 @@
       activeTab.value = 'lines'
       return false
     }
-    if (kind.value === 'sales_quotation' && details.quotationScene === 'project') {
-      if (!header.projectId && !details.autoCreateProject) {
-        ElMessage.warning('请选择既有项目，或启用自动创建项目')
-        return false
-      }
-      if (details.autoCreateProject && !header.projectId && !details.plannedProjectName?.trim()) {
-        ElMessage.warning('请填写项目名称')
-        return false
-      }
-      if (
-        details.autoBuildBom &&
-        !details.autoCreateMaterials &&
-        lines.value.some((line) => !line.materialId)
-      ) {
-        ElMessage.warning('存在未编码明细；请先启用自动创建物料编码，再搭建 BOM 清单')
-        return false
-      }
-      if (
-        (details.autoCreateMaterials || details.autoBuildBom) &&
-        (!details.materialCategoryId || !details.baseUnitId || !details.materialCodeRuleId)
-      ) {
-        ElMessage.warning('请完整选择物料分类、基本单位和编码规则')
-        return false
-      }
-    }
     if (
       lines.value.some(
         (line) =>
@@ -2236,8 +2118,7 @@
           }
         ]
       : []
-    if (kind.value === 'sales_quotation' && !details.quotationScene)
-      details.quotationScene = 'standard'
+    if (kind.value === 'sales_quotation') details.quotationScene = 'standard'
     if (kind.value === 'sales_quotation' && !details.quotationQuantity)
       details.quotationQuantity = 1
     if (options.copy) delete details.automationResult

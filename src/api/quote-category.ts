@@ -14,6 +14,7 @@ export interface ScmQuoteCategory {
   projectId: string
   categoryName: string
   quotationNo: string | null
+  sourceQuotationId?: string | null
   quantity: number
   unitPrice: number
   feeItems: QuoteCategoryFee[]

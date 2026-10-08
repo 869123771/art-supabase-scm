@@ -22,13 +22,14 @@
       </ArtSectionCard>
       <ArtSectionCard
         title="报价明细"
-        :subtitle="`共 ${quotation?.lines.length ?? 0} 行。全部明细须已有物料编码；生成后可在 BOM 维护中复核。`"
+        :subtitle="`共 ${bomLines.length} 行。可分批选择已编码明细；生成后可在 BOM 维护中复核。`"
       >
         <ArtTable
-          :data="quotation?.lines ?? []"
+          :data="bomLines"
           :columns="lineColumns"
           :pagination="false"
-          row-key="lineId"
+          row-key="key"
+          @selection-change="selectedLines = $event"
           :max-height="290"
           class="w-full!"
         />
@@ -38,6 +39,13 @@
 </template>
 
 <script setup lang="ts">
+  import { computed, reactive, ref, watch } from 'vue'
+  import {
+    quotationActionLines,
+    selectedQuotationDocuments,
+    normalizeQuotationSelection,
+    type QuotationActionLine
+  } from '../quotation-selection'
   import { replaceReactiveModel } from '@/utils/form/model'
   import { ElMessage, type FormRules } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
@@ -50,9 +58,8 @@
   import type { ColumnOption } from '@/types'
   import { validateArtFormForSubmit } from '@/utils/form/validate-art-form'
   import {
-    convertScmQuotationToBom,
+    batchScmQuotationAction,
     fetchScmMaterialOptions,
-    type ScmDocumentLine,
     type ScmMaterialOption,
     type ScmSalesDocument
   } from '@scm/api'
@@ -63,6 +70,7 @@
   const dialogRef = ref<ArtDialogExpose<ScmSalesDocument>>()
   const formRef = ref<InstanceType<typeof ArtForm>>()
   const quotation = ref<ScmSalesDocument>()
+  const quotations = ref<ScmSalesDocument[]>([])
   const { detail, loading, loadError, openDetail, loadDetail, retryLoad } = useDetailRecord<
     ScmMaterialOption[]
   >(fetchScmMaterialOptions, '父件物料加载失败，请重试')
@@ -77,9 +85,9 @@
     }
   )
   const form = reactive({ parentMaterialId: '' })
-  const componentIds = computed(
-    () => new Set(quotation.value?.lines.map((line) => line.materialId) ?? [])
-  )
+  const bomLines = computed(() => quotationActionLines(quotations.value))
+  const selectedLines = ref<QuotationActionLine[]>([])
+  const componentIds = computed(() => new Set(bomLines.value.map((line) => line.materialId)))
   const formItems = computed<FormItem[]>(() => [
     {
       label: '父件物料',
@@ -100,7 +108,9 @@
   const rules: FormRules = {
     parentMaterialId: [{ required: true, message: '请选择父件物料', trigger: 'change' }]
   }
-  const lineColumns: ColumnOption<ScmDocumentLine>[] = [
+  const lineColumns: ColumnOption<QuotationActionLine>[] = [
+    { type: 'selection', width: 48 },
+    { prop: 'documentNo', label: '报价单号', minWidth: 160 },
     { prop: 'lineNo', label: '行号', width: 78 },
     { prop: 'materialCode', label: '物料编码', minWidth: 160, showOverflowTooltip: true },
     { prop: 'materialDescription', label: '物料描述', minWidth: 210, showOverflowTooltip: true },
@@ -111,10 +121,18 @@
     const source = quotation.value
     const revision = openRevision
     if (!source || loading.value || loadError.value) return false
+    if (!selectedLines.value.length) {
+      ElMessage.warning('请先选择报价明细')
+      return false
+    }
     try {
       if (!(await validateArtFormForSubmit(formRef.value))) return false
       if (revision !== openRevision) return false
-      await convertScmQuotationToBom(source.id, form.parentMaterialId)
+      await batchScmQuotationAction(
+        'bom',
+        selectedQuotationDocuments(quotations.value, selectedLines.value),
+        { parentMaterialId: form.parentMaterialId }
+      )
       if (revision !== openRevision) return false
       emit('success')
       return true
@@ -125,7 +143,15 @@
     }
   }
 
-  async function handleOpen(record: ScmSalesDocument): Promise<void> {
+  async function handleOpen(input: ScmSalesDocument | ScmSalesDocument[]): Promise<void> {
+    const records = normalizeQuotationSelection(input)
+    const record = records[0]
+    if (!record || new Set(records.map((item) => item.tenantId)).size !== 1) {
+      ElMessage.warning('请按租户分别选择报价单')
+      return
+    }
+    quotations.value = records
+    selectedLines.value = []
     if (
       record.status !== 'effective' ||
       !record.lines.length ||
@@ -139,7 +165,7 @@
     openDetail(record.tenantId)
     form.parentMaterialId = ''
     await dialogRef.value?.handleOpen(record, {
-      title: `转报价 BOM · ${record.documentNo}`,
+      title: `转报价 BOM · ${records.length} 张报价`,
       confirmText: '执行生成',
       onOpen: () => loadDetail(record.tenantId),
       onClose: () => {

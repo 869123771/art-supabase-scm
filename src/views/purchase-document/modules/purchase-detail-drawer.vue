@@ -1,12 +1,10 @@
 <template>
-  <ArtDrawer ref="drawerRef" @close="invalidateRequests">
+  <ArtDrawer :loading="detailLoading" ref="drawerRef" @close="invalidateRequests">
     <ArtAsyncState
-      :loading="detailLoading"
       :error="detailError"
       :empty="detailMissing"
       empty-text="暂无采购详情"
       empty-description="该记录暂无可读取详情，请刷新列表或重新加载"
-      loading-mode="mask"
       error-title="采购详情加载失败"
       @retry="loadCurrentDetail"
     >

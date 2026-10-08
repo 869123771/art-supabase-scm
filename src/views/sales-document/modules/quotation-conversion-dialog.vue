@@ -1,5 +1,5 @@
 <template>
-  <ArtDialog ref="dialogRef" size="md">
+  <ArtDialog ref="dialogRef" size="lg">
     <div class="flex min-w-0 flex-col gap-4">
       <ArtSectionCard
         title="选择目标单据"
@@ -42,21 +42,47 @@
         </label>
       </ArtSectionCard>
 
+      <ArtSectionCard
+        v-if="targetKind !== 'sales_contract'"
+        title="本批转单明细"
+        subtitle="选择本批物料并填写数量；各目标单据分别累计，不得超过报价数量。"
+        :loading="quantityLoading"
+        :error="quantityError"
+        @retry="retryQuantities"
+      >
+        <ArtTable
+          ref="lineTableRef"
+          :data="conversionLines"
+          :columns="lineColumns"
+          :pagination="false"
+          row-key="lineId"
+          :max-height="300"
+          class="w-full!"
+          @selection-change="selectedLines = $event"
+        />
+        <p class="mt-2 text-xs text-[var(--art-gray-600)]">已选 {{ selectedLines.length }} 行</p>
+      </ArtSectionCard>
       <ElAlert :title="targetDescription" type="info" :closable="false" show-icon />
     </div>
   </ArtDialog>
 </template>
 
-<script setup lang="ts">
+<script setup lang="tsx">
   import { notifyFriendlyError } from '@/hooks/core/useArtFeedback'
   import { useDetailRecord } from '@/hooks/core/useDetailRecord'
-  import { ElMessage } from 'element-plus'
+  import { ElMessage, ElInputNumber } from 'element-plus'
   import ArtDialog from '@/components/core/dialogs/art-dialog/index.vue'
   import type { ArtDialogExpose } from '@/components/core/dialogs/art-dialog/types'
+  import { computed, ref, watch } from 'vue'
+  import type { ColumnOption } from '@/types'
+  import ArtTable, { type ArtTableExpose } from '@/components/core/tables/art-table/index.vue'
   import ArtSectionCard from '@/components/core/surfaces/art-section-card/index.vue'
   import {
     convertScmStandardQuotation,
     fetchScmSupplierOptions,
+    fetchScmQuotationConversionQuantities,
+    type ScmDocumentLine,
+    type ScmQuotationConversionQuantity,
     type ScmQuotationConversionResult,
     type ScmQuotationConversionTarget,
     type ScmSalesDocument,
@@ -87,6 +113,79 @@
   const suppliers = computed(() => supplierOptions.value ?? [])
   const targetKind = ref<ScmQuotationConversionTarget>('sales_order')
   const supplierId = ref('')
+  type ConversionLine = ScmDocumentLine & {
+    convertedQuantity: number
+    remainingQuantity: number
+    transferQuantity: number
+  }
+  const conversionLines = ref<ConversionLine[]>([])
+  const selectedLines = ref<ConversionLine[]>([])
+  const lineTableRef = ref<ArtTableExpose>()
+  const requestId = ref(crypto.randomUUID())
+  const {
+    detail: quantities,
+    loading: quantityLoading,
+    loadError: quantityError,
+    openDetail: openQuantities,
+    loadDetail: loadQuantities,
+    retryLoad: retryQuantities
+  } = useDetailRecord<ScmQuotationConversionQuantity[]>(
+    fetchScmQuotationConversionQuantities,
+    '已转数量加载失败，请重试'
+  )
+  const lineColumns: ColumnOption<ConversionLine>[] = [
+    {
+      type: 'selection',
+      width: 48,
+      selectable: (row: ConversionLine) => row.remainingQuantity > 0
+    },
+    { prop: 'lineNo', label: '行号', width: 70 },
+    { prop: 'materialDescription', label: '物料描述', minWidth: 200, showOverflowTooltip: true },
+    { prop: 'quantity', label: '报价数量', width: 105, align: 'right' },
+    { prop: 'convertedQuantity', label: '已转数量', width: 105, align: 'right' },
+    { prop: 'remainingQuantity', label: '剩余可转', width: 105, align: 'right' },
+    {
+      prop: 'transferQuantity',
+      label: '本次数量',
+      minWidth: 155,
+      rules: {
+        validator: ({ row }) =>
+          !selectedLines.value.some((line) => line.lineId === row.lineId) ||
+          (row.transferQuantity > 0 && row.transferQuantity <= row.remainingQuantity),
+        message: '本次数量须大于零且不超过剩余可转数量'
+      },
+      formatter: (row) => (
+        <ElInputNumber
+          v-model={row.transferQuantity}
+          min={0}
+          max={row.remainingQuantity}
+          precision={3}
+          controls={false}
+          disabled={row.remainingQuantity <= 0}
+          aria-label={`第${row.lineNo}行本次转单数量`}
+          class="w-full!"
+        />
+      )
+    }
+  ]
+  function resetConversionLines() {
+    selectedLines.value = []
+    conversionLines.value = (quotation.value?.lines ?? []).map((line) => {
+      const convertedQuantity = (quantities.value ?? [])
+        .filter((item) => item.targetKind === targetKind.value && item.lineId === line.lineId)
+        .reduce((sum, item) => sum + Number(item.quantity), 0)
+      const remainingQuantity = Math.max(0, Number((line.quantity - convertedQuantity).toFixed(3)))
+      return { ...line, convertedQuantity, remainingQuantity, transferQuantity: remainingQuantity }
+    })
+  }
+  watch([quantities, targetKind], resetConversionLines)
+  watch(
+    [targetKind, supplierId, selectedLines, conversionLines],
+    () => {
+      requestId.value = crypto.randomUUID()
+    },
+    { deep: true }
+  )
   let openRevision = 0
   const route = useRoute()
   watch(
@@ -94,6 +193,7 @@
     () => {
       openRevision += 1
       openDetail('')
+      openQuantities('')
     }
   )
   const allowedTargets = ref<ScmQuotationConversionTarget[]>([])
@@ -108,12 +208,13 @@
     allowedTargets.value.map((value) => ({ label: targetLabels[value], value }))
   )
   const targetDescription = computed(() => {
-    if (targetKind.value === 'sales_order') return '生成销售订单草稿，继续维护交付与收款计划。'
+    if (targetKind.value === 'sales_order')
+      return '将自动生成销售订单草稿。单据类型可在草稿中补充，下达前必须填写。'
     if (targetKind.value === 'sales_contract')
       return '生成销售合同草稿，继续维护合同条款与收款计划。'
     if (targetKind.value === 'purchase_request')
       return '生成采购申请草稿，仅转换已关联物料编码的报价明细。'
-    return '生成采购订单草稿，仅转换已关联物料编码的报价明细，并绑定所选供应商。'
+    return '生成采购订单草稿并绑定供应商。采购员未指定时仅提醒，可在草稿中补充。'
   })
 
   async function handleConfirm(): Promise<boolean> {
@@ -132,11 +233,28 @@
       ElMessage.warning('请等待供应商列表加载成功后重试')
       return false
     }
+    if (
+      targetKind.value !== 'sales_contract' &&
+      (quantityLoading.value || quantityError.value || !selectedLines.value.length)
+    ) {
+      ElMessage.warning(quantityError.value ? '请重试加载剩余数量' : '请选择本批转单明细')
+      return false
+    }
     try {
+      if (
+        targetKind.value !== 'sales_contract' &&
+        (await lineTableRef.value?.validate())?.valid === false
+      )
+        return false
       const { data } = await convertScmStandardQuotation(
         source.id,
         targetKind.value,
-        supplierId.value || null
+        supplierId.value || null,
+        selectedLines.value.map((line) => ({
+          lineId: line.lineId,
+          quantity: line.transferQuantity
+        })),
+        requestId.value
       )
       if (revision !== openRevision) return false
       if (!data) {
@@ -158,6 +276,9 @@
       return
     }
     quotation.value = options.quotation
+    openQuantities(options.quotation.id)
+    requestId.value = crypto.randomUUID()
+    resetConversionLines()
     openRevision += 1
     allowedTargets.value = options.targets
     targetKind.value = options.targets[0]
@@ -165,15 +286,17 @@
     openDetail(options.quotation.tenantId)
     await dialogRef.value?.handleOpen(options, {
       title: `报价转单 · ${options.quotation.documentNo}`,
-      subtitle: '一次选择一个目标单据；重复提交会返回已生成的草稿，不会重复建单。',
+      subtitle: '按明细分批转单；同一批重试不会重复建单。',
       confirmText: '生成目标单据',
       onOpen: () => {
+        void loadQuantities(options.quotation.id)
         if (targetKind.value === 'purchase_order' && !loading.value)
           void loadDetail(options.quotation.tenantId)
       },
       onClose: () => {
         openRevision += 1
         openDetail('')
+        openQuantities('')
         quotation.value = undefined
       },
       onConfirm: handleConfirm,

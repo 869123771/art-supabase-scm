@@ -3186,8 +3186,7 @@
       return false
     }
     if (kind.value === 'purchase_order' && !details.buyer) {
-      ElMessage.warning('请选择采购员')
-      return false
+      ElMessage.warning('采购员尚未指定，可在订单草稿中补充')
     }
     if (
       kind.value === 'purchase_order' &&

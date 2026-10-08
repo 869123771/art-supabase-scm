@@ -1,8 +1,8 @@
 <template>
-  <ScmDocumentWorkspace kind="project_quotation" />
+  <ProjectWorkspace />
 </template>
 
 <script setup lang="ts">
-  import ScmDocumentWorkspace from '@scm/views/sales-document/scm-document-workspace.vue'
+  import ProjectWorkspace from './modules/project-workspace.vue'
   defineOptions({ name: 'ScmProjectQuotation' })
 </script>

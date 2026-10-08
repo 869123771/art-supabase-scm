@@ -84,7 +84,8 @@
     <ArtTableMultipleSelect
       ref="pickerRef"
       v-model="selectedMaterialIds"
-      :data="materials"
+      :api-fn="materialPickerApi"
+      :navigation="materialNavigation"
       :columns="materialPickerColumns"
       :title="shipping ? '添加物料' : '参选物料编码'"
       :subtitle="
@@ -96,7 +97,7 @@
       :label-key="materialPickerLabel"
       description-key="materialCode"
       search-placeholder="搜索物料编码或描述"
-      :show-pagination="false"
+      :show-pagination="true"
       reset-draft-on-open
       @confirm="confirmMaterials"
     >
@@ -130,6 +131,14 @@
 </template>
 
 <script setup lang="tsx">
+  import { computed, ref, watch } from 'vue'
+  import { fetchWmsMaterialCategories } from '@/api/wms-material-category'
+  import {
+    buildMaterialCategoryNavigation,
+    getMaterialCategoryIds
+  } from '@/utils/business/material-category'
+  import type { MaterialSelectCategory } from '@/components/business/art-material-select/index.vue'
+  import type { DataSelectFetchParams } from '@/components/core/forms/art-data-select/types'
   import { formatUnitDisplayName } from '@/utils/business/unit-display'
   import { omit } from 'lodash-es'
   import {
@@ -179,7 +188,6 @@
       quotation?: boolean
       contract?: boolean
       order?: boolean
-      engineering?: boolean
       operational?: boolean
       shipping?: boolean
       loading?: boolean
@@ -201,7 +209,6 @@
       units: () => [],
       contract: false,
       order: false,
-      engineering: false,
       operational: false,
       shipping: false,
       loading: false,
@@ -216,6 +223,40 @@
     selectLoading: []
   }>()
   const pickerRef = ref<ArtDataSelectExpose>()
+  const materialCategories = ref<MaterialSelectCategory[]>([])
+  const materialNavigation = computed(() =>
+    buildMaterialCategoryNavigation(materialCategories.value)
+  )
+  let loadedCategoryTenant = ''
+  watch(
+    () => props.tenantId || props.materials[0]?.tenantId,
+    () => {
+      materialCategories.value = []
+      loadedCategoryTenant = ''
+    }
+  )
+  async function materialPickerApi(params: DataSelectFetchParams) {
+    const tenantId = props.tenantId || props.materials[0]?.tenantId
+    if (tenantId && loadedCategoryTenant !== tenantId) {
+      materialCategories.value = await fetchWmsMaterialCategories(tenantId)
+      loadedCategoryTenant = tenantId
+    }
+    const categoryIds = getMaterialCategoryIds(
+      materialCategories.value,
+      String(params.filters.categoryId || '')
+    )
+    const keyword = params.keyword.trim().toLowerCase()
+    const rows = props.materials.filter(
+      (row) =>
+        (!categoryIds || categoryIds.includes(row.categoryId || '')) &&
+        (!keyword ||
+          [row.materialCode, row.materialName, row.materialDescription, row.specification].some(
+            (value) => value?.toLowerCase().includes(keyword)
+          ))
+    )
+    const start = (params.page - 1) * params.pageSize
+    return { data: rows.slice(start, start + params.pageSize), total: rows.length }
+  }
   const quotationPickerRef = ref<ArtDialogExpose>()
   const tableRef = ref<ArtTableExpose>()
   const selectedMaterialIds = ref<string[]>([])
@@ -223,6 +264,7 @@
     row.materialDescription || '未命名物料'
   const materialPickerColumns: DataSelectColumn[] = [
     { prop: 'materialCode', label: '物料编码', minWidth: 150 },
+    { prop: 'materialName', label: '物料名称', minWidth: 180 },
     { prop: 'materialDescription', label: '物料描述', minWidth: 220 },
     { prop: 'specification', label: '规格型号', minWidth: 160 },
     { prop: 'unit', label: '单位', width: 90, formatter: (row) => props.displayUnitName(row.unit) }
@@ -450,7 +492,7 @@
           }
         ]
       : []),
-    ...(props.engineering || props.operational
+    ...(props.operational
       ? [
           {
             type: 'expand' as const,
@@ -463,40 +505,6 @@
                   规格型号
                   <ElInput v-model={row.specification} maxlength={100} placeholder="可选" />
                 </label>
-                {props.engineering && (
-                  <>
-                    <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
-                      品牌
-                      <ElInput v-model={row.brand} maxlength={100} placeholder="可选" />
-                    </label>
-                    <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
-                      分部工程
-                      <ElSelect
-                        v-model={row.division}
-                        filterable
-                        allowCreate
-                        defaultFirstOption
-                        clearable
-                        placeholder="天花 / 地面 / 墙面"
-                        class="w-full!"
-                      >
-                        {['天花', '地面', '墙面'].map((division) => (
-                          <ElOption key={division} value={division} label={division} />
-                        ))}
-                      </ElSelect>
-                    </label>
-                    <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
-                      单台数量 / 辅助数量
-                      <ElInputNumber
-                        v-model={row.unitQuantity}
-                        min={0}
-                        precision={3}
-                        controls={false}
-                        class="w-full!"
-                      />
-                    </label>
-                  </>
-                )}
                 <label class="flex min-w-0 flex-col gap-1 text-[var(--art-gray-600)]">
                   生产厂家
                   <ElInput v-model={row.manufacturer} maxlength={100} placeholder="可选" />

@@ -5,7 +5,7 @@
         density="compact"
         eyebrow="QUOTATION ITEMS"
         title="报价项分类"
-        description="按项目维护报价项、数量、单价与附加费用；总价由系统统一计算。"
+        description="按项目与产品分类查看审批报价；每个报价单号独立一行，保留数量、价格与费用。"
         icon="ri:price-tag-2-line"
         :tags="[
           { label: '关联项目主数据', type: 'primary' },

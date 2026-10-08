@@ -84,6 +84,7 @@
   import { startWorkflow } from '@/api/workflow'
   import { storeToRefs } from 'pinia'
   import { buildSupabasePageRange } from '@/utils/supabase/pagination'
+  import { fetchUnitDisplayOptions } from '@/api/unit-of-measure'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { useRouter } from 'vue-router'
   import ArtButtonMore, {
@@ -126,12 +127,12 @@
     activateScmProjectQuotation,
     deleteScmSalesDocument,
     fetchScmCustomerOptions,
-    fetchScmEngineeringReferenceOptions,
     fetchScmDocumentTypeOptions,
     fetchScmMaterialOptions,
     fetchScmProjectOptions,
     fetchScmSalesDocument,
     fetchScmSalesDocuments,
+    batchScmQuotationAction,
     fetchScmRemainingSourceLines,
     generateScmSalesContract,
     importScmSalesOrders,
@@ -231,9 +232,9 @@
       targets: ScmQuotationConversionTarget[]
     }) => Promise<void>
   }>()
-  const materialDialogRef = ref<{ handleOpen: (record: ScmSalesDocument) => Promise<void> }>()
-  const workOrderDialogRef = ref<{ handleOpen: (record: ScmSalesDocument) => Promise<void> }>()
-  const bomDialogRef = ref<{ handleOpen: (record: ScmSalesDocument) => Promise<void> }>()
+  const materialDialogRef = ref<InstanceType<typeof QuotationMaterialDialog>>()
+  const workOrderDialogRef = ref<InstanceType<typeof QuotationWorkOrderDialog>>()
+  const bomDialogRef = ref<InstanceType<typeof QuotationBomDialog>>()
   const search = ref<ScmSalesDocumentQuery>({ keyword: '' })
   type SalesListRow = ScmSalesDocument & {
     detailRowId?: string
@@ -263,25 +264,15 @@
   )
   const importColumns = [
     { key: 'documentNo', title: '导入分组号（系统生成报价单号）', required: true },
-    { key: 'quotationScene', title: '报价场景（标准/工程）', required: true },
     { key: 'projectCode', title: '已有项目编码' },
-    { key: 'plannedProjectName', title: '项目名称' },
-    { key: 'projectAddress', title: '项目地址' },
-    { key: 'constructionNo', title: '施工号' },
     { key: 'customerCode', title: '客户编码', required: true },
     { key: 'documentDate', title: '报价日期（YYYY-MM-DD）', required: true },
-    { key: 'autoCreateProject', title: '自动建项目（是/否）' },
-    { key: 'autoCreateMaterials', title: '自动建物料（是/否）' },
-    { key: 'autoBuildBom', title: '自动建BOM（是/否）' },
-    { key: 'materialCategoryCode', title: '物料分类编码' },
     { key: 'baseUnitCode', title: '基本单位编码' },
-    { key: 'materialCodeRuleCode', title: '物料编码规则' },
     { key: 'materialCode', title: '物料编码' },
     { key: 'lineNo', title: '行号' },
     { key: 'materialDescription', title: '物料描述', required: true },
     { key: 'specification', title: '规格型号' },
     { key: 'brand', title: '品牌' },
-    { key: 'division', title: '分部工程' },
     { key: 'salesUnit', title: '销售单位' },
     { key: 'quantity', title: '数量', required: true },
     { key: 'unitPrice', title: '单价（元）', required: true },
@@ -365,7 +356,7 @@
     {
       permission: config.value.permissions.Add,
       type: 'add',
-      label: `新增${config.value.title}`,
+      label: props.kind === 'sales_quotation' ? '新增' : `新增${config.value.title}`,
       onClick: () => openDialog()
     },
     {
@@ -386,7 +377,6 @@
               { key: 'taxRate', title: '税率(%)' }
             ]
           : []),
-        ...(props.kind === 'sales_quotation' ? [{ key: 'quotationScene', title: '报价场景' }] : []),
         { key: 'projectName', title: '项目名称' },
         { key: 'customerName', title: '客户全称' },
         { key: 'documentDate', title: '单据日期' },
@@ -414,8 +404,71 @@
     }
   ])
 
+  function quotationSelection(rows: readonly unknown[], coded?: boolean): ScmSalesDocument[] {
+    const groups = new Map<string, ScmSalesDocument>()
+    for (const raw of rows) {
+      const row = raw as SalesListRow
+      const group = groups.get(row.id) ?? { ...row, lines: [] }
+      const candidates = row.detailLine ? [row.detailLine] : row.lines
+      for (const line of candidates) {
+        if (
+          (coded === undefined || Boolean(line.materialId) === coded) &&
+          !group.lines.some((item) => item.lineId === line.lineId)
+        )
+          group.lines.push(line)
+      }
+      groups.set(row.id, group)
+    }
+    return [...groups.values()].filter((row) => row.lines.length > 0)
+  }
+  function validQuotationSelection(
+    rows: Record<string, unknown>[],
+    status: string,
+    coded: boolean
+  ): boolean {
+    const selected = quotationSelection(rows, coded)
+    return (
+      selected.length > 0 &&
+      new Set(selected.map((row) => row.tenantId)).size === 1 &&
+      rows.every((row) => row.status === status && row.workflowStatus !== 'running')
+    )
+  }
+  async function handleQuotationDelete(rows: SalesListRow[]): Promise<void> {
+    const records = quotationSelection(rows)
+    const resources = records.map((row) => ({ id: row.id, label: row.documentNo }))
+    if (await inspectDeleteReferences(resources)) return
+    const deletingLines = displayMode.value === 'line'
+    try {
+      await confirmAction(
+        deletingLines
+          ? `确定删除选中的 ${rows.length} 行报价明细吗？报价单将保留。`
+          : `确定删除选中的 ${records.length} 张报价草稿吗？`,
+        '批量删除',
+        {
+          type: 'warning',
+          confirmButtonText: '确认删除',
+          cancelButtonText: '取消',
+          confirmButtonType: 'danger'
+        }
+      )
+    } catch {
+      return
+    }
+    try {
+      await batchScmQuotationAction(
+        deletingLines ? 'delete_lines' : 'delete_documents',
+        records,
+        {}
+      )
+      await tableRef.value?.refreshRemove()
+    } catch (error) {
+      if (!(await inspectDeleteReferences(resources)))
+        notifyFriendlyError(error, '删除失败，请刷新关联和单据状态后重试')
+    }
+  }
+
   const selectionActions = computed<ArtTableQueryHeaderAction[]>(() =>
-    displayMode.value === 'line'
+    displayMode.value === 'line' && props.kind !== 'sales_quotation'
       ? []
       : props.kind === 'sales_order'
         ? [
@@ -492,16 +545,11 @@
                   icon: 'ri:barcode-line',
                   selectionRequired: true,
                   disabled: (ctx) =>
-                    ctx.selectedRows.length !== 1 ||
                     !hasAuth('MdmMaterialArchive:Add') ||
-                    (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'draft' ||
-                    (ctx.selectedRows[0] as ScmSalesDocument)?.workflowStatus === 'running' ||
-                    !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.some(
-                      (line) => !line.materialId
-                    ),
+                    !validQuotationSelection(ctx.selectedRows, 'draft', false),
                   onClick: (ctx) =>
                     void materialDialogRef.value?.handleOpen(
-                      ctx.selectedRows[0] as ScmSalesDocument
+                      quotationSelection(ctx.selectedRows, false)
                     )
                 },
                 {
@@ -512,12 +560,9 @@
                   selectionRequired: true,
                   disabled: (ctx) =>
                     ctx.selectedRows.some(
-                      (row) =>
-                        (row as ScmSalesDocument).status !== 'draft' ||
-                        (row as ScmSalesDocument).workflowStatus === 'running'
+                      (row) => row.status !== 'draft' || row.workflowStatus === 'running'
                     ),
-                  onClick: (ctx) =>
-                    handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
+                  onClick: (ctx) => handleQuotationDelete(ctx.selectedRows as SalesListRow[])
                 },
                 {
                   permission: config.value.permissions.GenerateWorkOrder,
@@ -526,15 +571,11 @@
                   icon: 'ri:hammer-line',
                   selectionRequired: true,
                   disabled: (ctx) =>
-                    ctx.selectedRows.length !== 1 ||
                     !hasAuth('MesWorkOrder:Add') ||
-                    (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'effective' ||
-                    !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.some(
-                      (line) => line.materialId
-                    ),
+                    !validQuotationSelection(ctx.selectedRows, 'effective', true),
                   onClick: (ctx) =>
                     void workOrderDialogRef.value?.handleOpen(
-                      ctx.selectedRows[0] as ScmSalesDocument
+                      quotationSelection(ctx.selectedRows, true)
                     )
                 },
                 {
@@ -544,22 +585,17 @@
                   icon: 'ri:node-tree',
                   selectionRequired: true,
                   disabled: (ctx) =>
-                    ctx.selectedRows.length !== 1 ||
                     !hasAuth('MdmBomMaintenance:Add') ||
-                    (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'effective' ||
-                    !(ctx.selectedRows[0] as ScmSalesDocument)?.lines.length ||
-                    (ctx.selectedRows[0] as ScmSalesDocument)?.lines.some(
-                      (line) => !line.materialId
-                    ),
+                    !validQuotationSelection(ctx.selectedRows, 'effective', true),
                   onClick: (ctx) =>
-                    void bomDialogRef.value?.handleOpen(ctx.selectedRows[0] as ScmSalesDocument)
+                    void bomDialogRef.value?.handleOpen(quotationSelection(ctx.selectedRows, true))
                 }
               ]
             : []
   )
 
   const columnsFactory = (): ColumnOption<SalesListRow>[] => [
-    ...(displayMode.value !== 'line' &&
+    ...((displayMode.value !== 'line' || props.kind === 'sales_quotation') &&
     ['sales_order', 'sales_quotation', 'shipping_notice', 'loading'].includes(props.kind)
       ? [{ type: 'selection' as const, width: 48, fixed: 'left' as const }]
       : []),
@@ -588,17 +624,6 @@
       minWidth: 140,
       formatter: (row) => groupValue(row, row.documentType?.documentTypeName || '--')
     },
-    ...(['sales_quotation', 'sales_contract', 'sales_order'].includes(props.kind)
-      ? [
-          {
-            prop: 'quotationScene',
-            label: '报价场景',
-            minWidth: 125,
-            formatter: (row: SalesListRow) =>
-              groupValue(row, row.details.quotationScene === 'project' ? '项目工程' : '标准产品')
-          } as ColumnOption<ScmSalesDocument>
-        ]
-      : []),
     {
       prop: 'projectId',
       label: '项目名称',
@@ -923,11 +948,7 @@
         icon: 'ri:file-add-line'
       })
     }
-    if (
-      props.kind === 'sales_quotation' &&
-      row.status === 'effective' &&
-      row.details.quotationScene !== 'project'
-    ) {
+    if (props.kind === 'sales_quotation' && row.status === 'effective') {
       actions.push({
         auth: config.value.permissions.Convert,
         key: 'convert',
@@ -1284,7 +1305,6 @@
         : undefined,
       unitPrice: row.detailLine?.unitPrice,
       taxRate: row.detailLine?.taxRate,
-      quotationScene: row.details.quotationScene === 'project' ? '工程' : '标准',
       projectName: row.project?.projectName || row.details.plannedProjectName || '',
       customerName: row.customer?.customerName || '',
       documentDate: row.documentDate,
@@ -1412,14 +1432,12 @@
     const tenantId = importTenantId.value
     if (!tenantId) throw new Error('请先选择所属租户')
     if (!rows.length || rows.length > 2000) throw new Error('每次可导入 1–2000 行明细')
-    const [projectResponse, customerResponse, materialResponse, engineeringResponse, typeResponse] =
-      await Promise.all([
-        fetchScmProjectOptions(tenantId),
-        fetchScmCustomerOptions(tenantId),
-        fetchScmMaterialOptions(tenantId),
-        fetchScmEngineeringReferenceOptions(tenantId),
-        fetchScmDocumentTypeOptions(tenantId, config.value.menuName)
-      ])
+    const [projectResponse, customerResponse, materialResponse, typeResponse] = await Promise.all([
+      fetchScmProjectOptions(tenantId),
+      fetchScmCustomerOptions(tenantId),
+      fetchScmMaterialOptions(tenantId),
+      fetchScmDocumentTypeOptions(tenantId, config.value.menuName)
+    ])
     const defaultType = typeResponse.data?.find((item) => item.isDefault)
     if (!defaultType) throw new Error('请先在 MDM 单据类型中为销售报价单设置默认类型')
     const projects = new Map((projectResponse.data ?? []).map((item) => [item.projectCode, item]))
@@ -1429,72 +1447,29 @@
     const materials = new Map(
       (materialResponse.data ?? []).map((item) => [item.materialCode, item])
     )
-    const categories = new Map(
-      (engineeringResponse.data?.categories ?? []).map((item) => [item.code, item.id])
-    )
-    const units = new Map(
-      (engineeringResponse.data?.units ?? []).map((item) => [item.code, item.id])
-    )
-    const codeRules = new Map(
-      (engineeringResponse.data?.codeRules ?? []).map((item) => [item.code, item.id])
-    )
+    const unitOptions = await fetchUnitDisplayOptions([tenantId])
+    const units = new Map(unitOptions.map((unit) => [unit.unitCode, unit.unitName]))
     const documents = new Map<string, ScmSalesDocumentWrite>()
     rows.forEach((row, index) => {
       const prefix = `第 ${index + 2} 行`
       const documentNo = String(row.documentNo ?? '').trim()
-      const sceneText = String(row.quotationScene ?? '').trim()
-      const quotationScene =
-        sceneText === '工程' ? 'project' : sceneText === '标准' ? 'standard' : ''
       const projectCode = String(row.projectCode ?? '').trim()
       const project = projectCode ? projects.get(projectCode) : undefined
       const customer = customers.get(String(row.customerCode ?? '').trim())
       const documentDate = String(row.documentDate ?? '').trim()
       const materialCode = String(row.materialCode ?? '').trim()
       const material = materialCode ? materials.get(materialCode) : undefined
+      if (row.baseUnitCode && !units.has(String(row.baseUnitCode).trim()))
+        throw new Error(`${prefix}：基本单位编码须来自当前租户 MDM 计量单位`)
       const materialDescription = String(row.materialDescription ?? '').trim()
       const quantityText = String(row.quantity ?? '').trim()
       const unitPriceText = String(row.unitPrice ?? '').trim()
       const taxRateText = String(row.taxRate ?? '0').trim() || '0'
       const costText = String(row.costUnitPrice ?? '0').trim() || '0'
-      if (
-        !documentNo ||
-        documentNo.length > 60 ||
-        !quotationScene ||
-        !customer ||
-        (projectCode && !project)
-      ) {
-        throw new Error(`${prefix}：报价单号、报价场景、项目编码或客户编码无效`)
+      if (!documentNo || documentNo.length > 60 || !customer || (projectCode && !project)) {
+        throw new Error(`${prefix}：报价单号、项目编码或客户编码无效`)
       }
-      const autoCreateProject = readImportBoolean(row.autoCreateProject, prefix, '自动建项目')
-      const autoCreateMaterials = readImportBoolean(row.autoCreateMaterials, prefix, '自动建物料')
-      const autoBuildBom = readImportBoolean(row.autoBuildBom, prefix, '自动建BOM')
-      const plannedProjectName = String(row.plannedProjectName ?? '').trim()
-      const constructionNo = String(row.constructionNo ?? '').trim()
-      if (quotationScene === 'standard' && !project)
-        throw new Error(`${prefix}：标准报价必须填写已有项目编码`)
-      if (quotationScene === 'project' && !project && (!autoCreateProject || !plannedProjectName))
-        throw new Error(`${prefix}：工程报价未选已有项目时，须启用自动建项目并填写项目名称`)
-      if (quotationScene === 'project' && !constructionNo)
-        throw new Error(`${prefix}：工程报价必须填写施工号`)
-      if (
-        quotationScene === 'project' &&
-        autoBuildBom &&
-        !autoCreateMaterials &&
-        !String(row.materialCode ?? '').trim()
-      )
-        throw new Error(`${prefix}：自动建BOM的未编码子目须启用自动建物料`)
-      const categoryCode = String(row.materialCategoryCode ?? '').trim()
-      const unitCode = String(row.baseUnitCode ?? '').trim()
-      const ruleCode = String(row.materialCodeRuleCode ?? '').trim()
-      const materialCategoryId = categories.get(categoryCode)
-      const baseUnitId = units.get(unitCode)
-      const materialCodeRuleId = codeRules.get(ruleCode)
-      if (
-        quotationScene === 'project' &&
-        (autoCreateMaterials || autoBuildBom) &&
-        (!materialCategoryId || !baseUnitId || !materialCodeRuleId)
-      )
-        throw new Error(`${prefix}：请填写当前租户有效的物料分类、基本单位与编码规则`)
+      if (!project) throw new Error(`${prefix}：标准报价必须填写已有项目编码`)
       if (project?.customerId && project.customerId !== customer.id) {
         throw new Error(`${prefix}：客户与项目不一致`)
       }
@@ -1519,17 +1494,7 @@
         previous &&
         (previous.projectId !== (project?.id ?? null) ||
           previous.customerId !== customer.id ||
-          previous.documentDate !== documentDate ||
-          previous.details.quotationScene !== quotationScene ||
-          previous.details.plannedProjectName !== plannedProjectName ||
-          previous.details.projectAddress !== String(row.projectAddress ?? '').trim() ||
-          previous.details.constructionNo !== constructionNo ||
-          Boolean(previous.details.autoCreateProject) !== autoCreateProject ||
-          Boolean(previous.details.autoCreateMaterials) !== autoCreateMaterials ||
-          Boolean(previous.details.autoBuildBom) !== autoBuildBom ||
-          previous.details.materialCategoryId !== materialCategoryId ||
-          previous.details.baseUnitId !== baseUnitId ||
-          previous.details.materialCodeRuleId !== materialCodeRuleId)
+          previous.documentDate !== documentDate)
       ) {
         throw new Error(`${prefix}：同一报价单的项目、客户和日期须一致`)
       }
@@ -1544,21 +1509,7 @@
         documentDate,
         deliveryDate: null,
         currency: 'CNY',
-        details:
-          quotationScene === 'project'
-            ? {
-                quotationScene,
-                plannedProjectName,
-                projectAddress: String(row.projectAddress ?? '').trim(),
-                constructionNo,
-                autoCreateProject,
-                autoCreateMaterials,
-                autoBuildBom,
-                materialCategoryId,
-                baseUnitId,
-                materialCodeRuleId
-              }
-            : { quotationScene },
+        details: { quotationScene: 'standard' },
         lines: [],
         fees: [],
         paymentPlans: [],
@@ -1582,7 +1533,7 @@
         materialDescription,
         specification: String(row.specification ?? '').trim() || material?.specification || '',
         brand: String(row.brand ?? '').trim(),
-        division: String(row.division ?? '').trim(),
+        baseUnit: units.get(String(row.baseUnitCode ?? '').trim()) || material?.baseUnitName || '',
         salesUnit: String(row.salesUnit ?? '').trim() || material?.unit || '',
         quantity: Number(quantityText),
         unitPrice: Number(unitPriceText),
