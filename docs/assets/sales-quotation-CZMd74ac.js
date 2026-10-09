@@ -1,1 +1,0 @@
-import{Qi as e,oa as t,wa as n}from"./index-Y9p_CAja.js";import{t as r}from"./scm-document-workspace-CW6zd_cL.js";var i=t({name:`ScmSalesQuotation`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`sales_quotation`}))}});export{i as default};

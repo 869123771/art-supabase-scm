@@ -1,5 +1,5 @@
 <template>
-  <ArtDialog ref="dialogRef" size="xl">
+  <ArtDialog ref="dialogRef" :loading="loading" loading-text="正在加载物料配置…" size="xl">
     <div class="flex min-w-0 flex-col gap-4">
       <ArtSectionCard
         title="待生成报价明细"
@@ -19,7 +19,6 @@
       <ArtSectionCard
         title="物料编码配置"
         subtitle="选项与 MDM 物料编码主数据一致。"
-        :loading="loading"
         :error="loadError"
         @retry="retryLoad"
       >

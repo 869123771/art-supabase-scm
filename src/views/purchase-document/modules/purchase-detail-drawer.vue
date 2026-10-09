@@ -137,7 +137,7 @@
                       formatCurrencyValue(
                         line.gift
                           ? 0
-                          : line.quantity *
+                          : Number(line.quantity) *
                               line.unitPrice *
                               (1 - line.discountRate / 100) *
                               (1 + line.taxRate / 100)
@@ -226,7 +226,6 @@
   import { formatCurrencyValue } from '@/utils/ui/format'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { useUserStore } from '@/store/modules/user'
-  import { storeToRefs } from 'pinia'
   import {
     fetchScmMaterialOptions,
     fetchScmPurchaseDocument,
@@ -275,15 +274,14 @@
   const suggestedSuppliers = computed(() => detail.value?.suppliers ?? new Map<string, string>())
   let openRevision = 0
   const config = computed(() => purchaseConfigs[record.value.kind])
-  const { getDictMap } = storeToRefs(useUserStore())
+  const userStore = useUserStore()
   const headerItems: ArtDescriptionItem<ScmPurchaseDocument>[] = [
     { key: 'documentNo', label: '单据编号', field: 'documentNo' },
     {
       key: 'status',
       label: '单据状态',
       value: (row: ScmPurchaseDocument) =>
-        getDictMap.value?.scmPurchaseStatus?.find((item) => item.value === row.status)?.label ||
-        row.status
+        userStore.getDictItemByValue('scmPurchaseStatus', row.status)?.label || row.status
     },
     {
       key: 'projectName',
@@ -326,13 +324,13 @@
         const value = row.details[field.key]
         if (field.key === 'contractStatus')
           return (
-            getDictMap.value?.scmPurchaseContractStatus?.find((item) => item.value === value)
-              ?.label || String(value || '--')
+            userStore.getDictItemByValue('scmPurchaseContractStatus', value)?.label ||
+            String(value || '--')
           )
         if (field.key === 'effectiveness')
           return (
-            getDictMap.value?.scmContractEffectiveness?.find((item) => item.value === value)
-              ?.label || String(value || '--')
+            userStore.getDictItemByValue('scmContractEffectiveness', value)?.label ||
+            String(value || '--')
           )
         return String(row.details[`${field.key}Name` as keyof typeof row.details] ?? value ?? '--')
       },

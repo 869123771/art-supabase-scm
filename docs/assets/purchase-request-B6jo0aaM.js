@@ -1,1 +1,0 @@
-import{Qi as e,oa as t,wa as n}from"./index-Y9p_CAja.js";import{t as r}from"./purchase-workspace-CTXTidh7.js";var i=t({name:`ScmPurchaseRequest`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`purchase_request`}))}});export{i as default};

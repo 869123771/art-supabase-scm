@@ -1,6 +1,6 @@
 import { buildSupabaseRpcRange } from '@/utils/supabase'
 import { useSupabase } from '@/hooks'
-import { groupBy, uniq } from 'lodash-es'
+import { groupBy, omit, uniq } from 'lodash-es'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
 import { buildOrIlikeFilter } from '@/utils/supabase/search'
 import { fetchAllRangePages } from '@/utils/supabase/pagination'
@@ -35,6 +35,53 @@ const { supabase, responseHandle, keysToSnakeDeep } = useSupabase()
 
 const documentSelect =
   '*,project:mdm_project!scm_sales_document_project_id_fkey(project_code,project_name,customer_id),customer:mdm_customer!scm_sales_document_customer_id_fkey(customer_code,customer_name),document_type:mdm_document_type!scm_sales_document_document_type_id_fkey(document_type_code,document_type_name)'
+
+export interface ScmSalesSelection {
+  documentId: string
+  lineIds: string[] | null
+}
+
+export async function deleteScmSalesSelections(selections: ScmSalesSelection[]): Promise<void> {
+  await responseHandle(
+    () => supabase.rpc('scm_sales_delete_secure', { p_selections: keysToSnakeDeep(selections) }),
+    { breakReturn: true, showErrorMessage: false }
+  )
+}
+
+export async function fetchScmSalesDeleteDependencies(selections: ScmSalesSelection[]) {
+  const { data } = await responseHandle<
+    import('@/api/master-data-delete').MasterDataDeleteDependencyDetail[]
+  >(
+    () =>
+      supabase.rpc('scm_sales_delete_dependencies_secure', {
+        p_selections: keysToSnakeDeep(selections)
+      }),
+    { breakReturn: true, showErrorMessage: false }
+  )
+  return data ?? []
+}
+
+export async function fetchScmQuoteLineAllocations(
+  quotationIds: string[],
+  targetKind: 'sales_contract' | 'sales_order',
+  excludeId?: string
+): Promise<Map<string, number>> {
+  if (!quotationIds.length) return new Map()
+  const { data } = await responseHandle<
+    Array<{ quotationId: string; lineId: string; quantity: number }>
+  >(
+    () =>
+      supabase.rpc('scm_quote_line_allocations_secure', {
+        p_quotation_ids: quotationIds,
+        p_target_kind: targetKind,
+        p_exclude_id: excludeId || null
+      }),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '报价待转数量加载失败，请重试' }
+  )
+  return new Map(
+    (data ?? []).map((row) => [`${row.quotationId}:${row.lineId}`, Number(row.quantity)])
+  )
+}
 
 /** Sales contracts can select active roster employees without HR maintenance permissions. */
 export async function fetchScmSalespersonOptions(params: EmployeeSelectorContractParams = {}) {
@@ -93,8 +140,29 @@ async function withContractStatuses(documents: ScmSalesDocument[]): Promise<ScmS
     breakReturn: true,
     showErrorMessage: false
   })
+  const { data: units } = await responseHandle<
+    Array<{ documentId: string; lineId: string; salesUnit: string }>
+  >(() => supabase.rpc('scm_sales_line_units_secure', { p_document_ids: contractIds }), {
+    breakReturn: true,
+    showErrorMessage: true,
+    errorMessage: '合同销售单位加载失败，请重试'
+  })
+  const lineUnits = new Map(
+    (units ?? []).map((row) => [`${row.documentId}:${row.lineId}`, row.salesUnit])
+  )
   const statuses = new Map((data ?? []).map((status) => [status.contractId, status]))
-  return documents.map((document) => ({ ...document, ...statuses.get(document.id) }))
+  return documents.map((document) =>
+    document.kind !== 'sales_contract'
+      ? document
+      : {
+          ...document,
+          ...statuses.get(document.id),
+          lines: document.lines.map((line) => ({
+            ...line,
+            salesUnit: lineUnits.get(`${document.id}:${line.lineId}`) ?? line.salesUnit
+          }))
+        }
+  )
 }
 
 async function withOrderStatuses(documents: ScmSalesDocument[]): Promise<ScmSalesDocument[]> {
@@ -108,8 +176,69 @@ async function withOrderStatuses(documents: ScmSalesDocument[]): Promise<ScmSale
     breakReturn: true,
     showErrorMessage: false
   })
+  const { data: progress } = await responseHandle<
+    Array<{
+      orderId: string
+      lineId: string
+      shippingNoticeQuantity: number
+      outboundQuantity: number
+      returnedQuantity: number
+    }>
+  >(() => supabase.rpc('scm_sales_order_line_progress_secure', { p_order_ids: orderIds }), {
+    breakReturn: true,
+    showErrorMessage: true,
+    errorMessage: '销售订单交货数量加载失败，请重试'
+  })
   const statuses = new Map((data ?? []).map((status) => [status.orderId, status.orderStatus]))
-  return documents.map((document) => ({ ...document, orderStatus: statuses.get(document.id) }))
+  const quantities = new Map((progress ?? []).map((row) => [`${row.orderId}:${row.lineId}`, row]))
+  return documents.map((document) =>
+    document.kind !== 'sales_order'
+      ? document
+      : {
+          ...document,
+          orderStatus: statuses.get(document.id),
+          lines: document.lines.map((line) => {
+            const row = quantities.get(`${document.id}:${line.lineId}`)
+            const outboundQuantity = Number(row?.outboundQuantity ?? 0)
+            const returnedQuantity = Number(row?.returnedQuantity ?? 0)
+            return {
+              ...line,
+              shippingNoticeQuantity: Number(row?.shippingNoticeQuantity ?? 0),
+              outboundQuantity,
+              returnedQuantity,
+              undeliveredQuantity: Number(line.quantity) - outboundQuantity - returnedQuantity
+            }
+          })
+        }
+  )
+}
+
+async function withLoadingProgress(documents: ScmSalesDocument[]): Promise<ScmSalesDocument[]> {
+  const ids = documents
+    .filter((document) => document.kind === 'loading')
+    .map((document) => document.id)
+  if (!ids.length) return documents
+  const { data } = await responseHandle<
+    Array<{ loadingId: string; lineId: string; deliveredQuantity: number }>
+  >(() => supabase.rpc('scm_loading_line_progress_secure', { p_loading_ids: ids }), {
+    breakReturn: true,
+    showErrorMessage: true,
+    errorMessage: '实际装车交货数量加载失败，请重试'
+  })
+  const progress = new Map(
+    (data ?? []).map((row) => [`${row.loadingId}:${row.lineId}`, Number(row.deliveredQuantity)])
+  )
+  return documents.map((document) =>
+    document.kind !== 'loading'
+      ? document
+      : {
+          ...document,
+          lines: document.lines.map((line) => ({
+            ...line,
+            deliveredQuantity: progress.get(`${document.id}:${line.lineId}`) ?? 0
+          }))
+        }
+  )
 }
 
 async function withSalesWorkflowStatuses(
@@ -120,12 +249,17 @@ async function withSalesWorkflowStatuses(
   )
   if (!workflowDocuments.length) return documents
   const { data } = await responseHandle<
-    Array<{ id: string; businessId: string; status: ScmSalesDocument['workflowStatus'] }>
+    Array<{
+      id: string
+      businessId: string
+      status: ScmSalesDocument['workflowStatus']
+      initiatorUserId: string
+    }>
   >(
     () =>
       supabase
         .from('wf_instance')
-        .select('id,business_id,status')
+        .select('id,business_id,status,initiator_user_id')
         .in('business_type', ['scm_sales_quotation', 'scm_sales_contract', 'scm_sales_order'])
         .in(
           'business_id',
@@ -134,7 +268,10 @@ async function withSalesWorkflowStatuses(
         .order('create_time', { ascending: false }),
     { breakReturn: true, showErrorMessage: false }
   )
-  const latest = new Map<string, { id: string; status: ScmSalesDocument['workflowStatus'] }>()
+  const latest = new Map<
+    string,
+    { id: string; status: ScmSalesDocument['workflowStatus']; initiatorUserId: string }
+  >()
   for (const instance of data ?? []) {
     if (!latest.has(instance.businessId)) {
       latest.set(instance.businessId, instance)
@@ -143,7 +280,8 @@ async function withSalesWorkflowStatuses(
   return documents.map((document) => ({
     ...document,
     workflowStatus: latest.get(document.id)?.status,
-    workflowInstanceId: latest.get(document.id)?.id
+    workflowInstanceId: latest.get(document.id)?.id,
+    workflowInitiatorUserId: latest.get(document.id)?.initiatorUserId
   }))
 }
 
@@ -177,7 +315,9 @@ export async function fetchScmSalesDocuments(
   })
   if (result.data?.length)
     result.data = await withSalesWorkflowStatuses(
-      await withOrderStatuses(await withContractStatuses(await withSourceDocuments(result.data)))
+      await withLoadingProgress(
+        await withOrderStatuses(await withContractStatuses(await withSourceDocuments(result.data)))
+      )
     )
   return result
 }
@@ -191,7 +331,9 @@ export async function fetchScmSalesDocument(id: string) {
     result.data = (
       await withSalesWorkflowStatuses(
         await withOrderStatuses(
-          await withContractStatuses(await withSourceDocuments([result.data]))
+          await withLoadingProgress(
+            await withContractStatuses(await withSourceDocuments([result.data]))
+          )
         )
       )
     )[0]
@@ -210,7 +352,14 @@ function writePayload(input: ScmSalesDocumentWrite) {
     deliveryDate: input.deliveryDate,
     currency: normalizeNonNullableText(input.currency),
     details: input.details,
-    lines: input.lines,
+    lines: input.lines.map((line) =>
+      omit(line, [
+        'shippingNoticeQuantity',
+        'outboundQuantity',
+        'returnedQuantity',
+        'undeliveredQuantity'
+      ])
+    ),
     fees: input.fees,
     paymentPlans: input.paymentPlans,
     deliveryPlans: input.deliveryPlans,
@@ -732,7 +881,7 @@ export async function fetchScmSourceOptions(
   const result = await fetchAllRangePages<ScmSalesDocument>(({ from, to }) => {
     let request = supabase
       .from('scm_sales_document')
-      .select('*')
+      .select(documentSelect)
       .eq('kind', kind)
       .eq('tenant_id', tenantId)
       .order('updated_at', { ascending: false })
@@ -776,13 +925,16 @@ export async function fetchScmRemainingSourceLines(
     if (['cancelled', 'closed', 'terminated'].includes(child.status)) continue
     for (const line of child.lines) {
       if (!line.sourceLineId) continue
-      allocated.set(line.sourceLineId, (allocated.get(line.sourceLineId) ?? 0) + line.quantity)
+      allocated.set(
+        line.sourceLineId,
+        (allocated.get(line.sourceLineId) ?? 0) + Number(line.quantity)
+      )
     }
   }
   return source.lines
     .map((line) => ({
       ...line,
-      quantity: Math.max(0, line.quantity - (allocated.get(line.lineId) ?? 0))
+      quantity: Math.max(0, Number(line.quantity) - (allocated.get(line.lineId) ?? 0))
     }))
     .filter((line) => line.quantity > 0)
 }

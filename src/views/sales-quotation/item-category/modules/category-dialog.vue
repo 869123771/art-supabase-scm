@@ -7,7 +7,6 @@
       <ArtAsyncState
         v-if="referencesError"
         :error="referencesError"
-        :loading="referencesLoading"
         loading-mode="mask"
         error-title="项目与费用加载失败"
         size="compact"

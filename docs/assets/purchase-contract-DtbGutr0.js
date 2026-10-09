@@ -1,0 +1,1 @@
+import{t as e}from"./purchase-workspace-BXDo32PV.js";import{da as t,ka as n,ra as r}from"./index-CdZlOU4A.js";var i=t({name:`ScmPurchaseContract`,__name:`index`,setup(t){return(t,i)=>(n(),r(e,{kind:`purchase_contract`}))}});export{i as default};

@@ -5,6 +5,7 @@ import { fetchAllRangePages } from '@/utils/supabase'
 import { createTenantScopeReadGuard } from '@/utils/tenant-scope-context'
 import { buildOrIlikeFilter } from '@/utils/supabase/search'
 import { toScmPurchaseLinePayload } from './purchase-line-payload'
+import { normalizeQuotationPurchaseLines } from './quotation-purchase-lines'
 import type {
   ScmPurchaseDocument,
   ScmPurchaseKind,
@@ -69,6 +70,7 @@ export interface ScmPurchaseWarehouseOption {
   warehouseCode: string
   warehouseName: string
   enableLocations: boolean
+  responsibleEmployeeId?: string | null
 }
 
 export interface ScmPurchaseBinOption {
@@ -252,7 +254,7 @@ export async function fetchScmPurchaseWarehouseOptions(tenantId: string) {
       () =>
         supabase
           .from('mdm_warehouse')
-          .select('id,warehouse_code,warehouse_name,enable_locations')
+          .select('id,warehouse_code,warehouse_name,enable_locations,responsible_employee_id')
           .eq('tenant_id', tenantId)
           .eq('status', 'enabled')
           .order('warehouse_code')
@@ -368,6 +370,7 @@ async function attachSuppliers(rows: ScmPurchaseDocument[]) {
 }
 
 async function attachSources(rows: ScmPurchaseDocument[]) {
+  rows = rows.map(normalizeQuotationPurchaseLines)
   const ids = uniq(rows.flatMap((row) => (row.sourceId ? [row.sourceId] : [])))
   if (!ids.length) return rows
   const { data } = await responseHandle<
@@ -723,6 +726,45 @@ export async function transitionScmPurchaseDocument(id: string, status: ScmPurch
       errorMessage: '状态变更失败，请检查前置状态和当前权限'
     }
   )
+}
+
+export interface ScmPurchaseSelection {
+  documentId: string
+  lineIds: string[] | null
+}
+
+export async function batchScmPurchaseDocuments(
+  action: 'delete' | 'copy' | 'submit' | 'buyer',
+  selections: ScmPurchaseSelection[],
+  buyerId?: string
+) {
+  return responseHandle<number>(
+    () =>
+      supabase.rpc('scm_purchase_batch_secure', {
+        p_action: action,
+        p_selections: keysToSnakeDeep(selections),
+        p_buyer_id: buyerId ?? null
+      }),
+    {
+      breakReturn: true,
+      showErrorMessage: false,
+      errorMessage: '批量操作失败，请刷新单据状态后重试'
+    }
+  )
+}
+
+export async function fetchScmPurchaseDeleteDependencies(selections: ScmPurchaseSelection[]) {
+  const result = await responseHandle<
+    import('@/api/master-data-delete').MasterDataDeleteDependencyDetail[]
+  >(
+    () =>
+      supabase.rpc('scm_purchase_delete_dependencies_secure', {
+        p_selections: keysToSnakeDeep(selections)
+      }),
+    { breakReturn: true, showErrorMessage: false, errorMessage: '引用检查失败，请重试' }
+  )
+  if (!result.data || result.error) throw new Error('引用检查失败，请重试', { cause: result.error })
+  return result.data
 }
 
 export async function fetchScmSupplierOptions(tenantId: string, supplierIds?: string[]) {

@@ -81,7 +81,7 @@
 
 <script setup lang="tsx">
   import { ElMessage, ElTag } from 'element-plus'
-  import { startWorkflow } from '@/api/workflow'
+  import { startWorkflow, withdrawWorkflow } from '@/api/workflow'
   import { storeToRefs } from 'pinia'
   import { buildSupabasePageRange } from '@/utils/supabase/pagination'
   import { fetchUnitDisplayOptions } from '@/api/unit-of-measure'
@@ -110,6 +110,7 @@
   import MasterDataDeleteGuard from '@/components/business/master-data-delete-guard/index.vue'
   import { notifyFriendlyError, useArtFeedback } from '@/hooks/core/useArtFeedback'
   import { useAuth } from '@/hooks/core/useAuth'
+  import { createRecordReferenceNavigation } from '@/components/business/master-data-delete-guard/record-navigation'
   import { useRecordDeleteGuard } from '@/hooks/core/useRecordDeleteGuard'
   import { useTenantScopeStore } from '@/store/modules/tenant-scope'
   import { useTenantScopeFormPolicy } from '@/hooks/core/useTenantScopeFormPolicy'
@@ -126,6 +127,9 @@
   import {
     activateScmProjectQuotation,
     deleteScmSalesDocument,
+    deleteScmSalesSelections,
+    fetchScmSalesDeleteDependencies,
+    type ScmSalesSelection,
     fetchScmCustomerOptions,
     fetchScmDocumentTypeOptions,
     fetchScmMaterialOptions,
@@ -166,6 +170,11 @@
     'detailLine.materialCode',
     'materialDescription',
     'quantity',
+    'detailLine.shippingNoticeQuantity',
+    'detailLine.outboundQuantity',
+    'detailLine.returnedQuantity',
+    'detailLine.undeliveredQuantity',
+    'detailLine.deliveredQuantity',
     'detailLine.salesUnit',
     'detailLine.unitPrice',
     'detailLine.taxRate'
@@ -468,9 +477,12 @@
   }
 
   const selectionActions = computed<ArtTableQueryHeaderAction[]>(() =>
-    displayMode.value === 'line' && props.kind !== 'sales_quotation'
+    displayMode.value === 'line' &&
+    !['sales_quotation', 'sales_contract', 'sales_order', 'shipping_notice', 'loading'].includes(
+      props.kind
+    )
       ? []
-      : props.kind === 'sales_order'
+      : props.kind === 'sales_contract'
         ? [
             {
               permission: config.value.permissions.Delete,
@@ -478,21 +490,15 @@
               label: '批量删除',
               icon: 'ri:delete-bin-line',
               selectionRequired: true,
-              disabled: (ctx) => ctx.selectedRows.some((row) => row.status !== 'draft'),
-              onClick: (ctx) =>
-                handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
-            },
-            {
-              permission: 'ScmSalesOrder:Push',
-              key: 'push-shipping',
-              label: '下推发货单',
-              icon: 'ri:truck-line',
-              selectionRequired: true,
-              disabled: (ctx) => ctx.selectedRows.length !== 1 || !hasAuth('ScmShippingNotice:Add'),
-              onClick: (ctx) => openDownpush(String(ctx.selectedRows[0]?.id ?? ''))
+              disabled: (ctx) =>
+                salesDeleteBusy.value ||
+                ctx.selectedRows.some(
+                  (row) => row.status !== 'draft' || row.workflowStatus === 'running'
+                ),
+              onClick: (ctx) => handleSalesSelectionDelete(ctx.selectedRows as SalesListRow[])
             }
           ]
-        : props.kind === 'shipping_notice' || props.kind === 'loading'
+        : props.kind === 'sales_order'
           ? [
               {
                 permission: config.value.permissions.Delete,
@@ -502,101 +508,132 @@
                 selectionRequired: true,
                 disabled: (ctx) => ctx.selectedRows.some((row) => row.status !== 'draft'),
                 onClick: (ctx) =>
-                  handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
+                  ['sales_contract', 'sales_order'].includes(props.kind)
+                    ? handleSalesSelectionDelete(ctx.selectedRows as SalesListRow[])
+                    : handleBatchDelete(ctx.selectedRows.map((row) => row as ScmSalesDocument))
               },
-              ...(props.kind === 'shipping_notice'
-                ? [
-                    {
-                      permission: 'ScmLoading:Add',
-                      key: 'push-loading',
-                      label: '下推发货装车',
-                      icon: 'ri:truck-fill',
-                      selectionRequired: true,
-                      disabled: (ctx: ArtTableQueryHeaderActionContext) =>
-                        ctx.selectedRows.length !== 1 ||
-                        (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'submitted',
-                      onClick: (ctx: ArtTableQueryHeaderActionContext) =>
-                        openLoadingFromNotice(ctx.selectedRows[0] as ScmSalesDocument)
-                    }
-                  ]
-                : [
-                    {
-                      permission: 'ScmLoadingOutbound:View',
-                      key: 'push-loading-outbound',
-                      label: '下推装车出库',
-                      icon: 'ri:logout-box-r-line',
-                      selectionRequired: true,
-                      disabled: (ctx: ArtTableQueryHeaderActionContext) =>
-                        ctx.selectedRows.length !== 1 ||
-                        !['loaded', 'completed'].includes(
-                          (ctx.selectedRows[0] as ScmSalesDocument)?.status
-                        ),
-                      onClick: (ctx: ArtTableQueryHeaderActionContext) =>
-                        openLoadingOutbound(ctx.selectedRows[0] as ScmSalesDocument)
-                    }
-                  ])
+              {
+                permission: 'ScmSalesOrder:Push',
+                key: 'push-shipping',
+                label: '下推发货通知单',
+                icon: 'ri:truck-line',
+                selectionRequired: true,
+                disabled: (ctx) =>
+                  new Set(ctx.selectedRows.map((row) => row.id)).size !== 1 ||
+                  ctx.selectedRows.some(
+                    (row) => !['approved', 'fulfilling'].includes(String(row.status))
+                  ) ||
+                  !hasAuth('ScmShippingNotice:Add'),
+                onClick: (ctx) =>
+                  openDownpush(
+                    String(ctx.selectedRows[0]?.id ?? ''),
+                    displayMode.value === 'line'
+                      ? (ctx.selectedRows as SalesListRow[])
+                          .map((row) => row.detailLine?.lineId ?? '')
+                          .filter(Boolean)
+                      : undefined
+                  )
+              }
             ]
-          : props.kind === 'sales_quotation'
+          : props.kind === 'shipping_notice' || props.kind === 'loading'
             ? [
-                {
-                  permission: config.value.permissions.GenerateMaterial,
-                  key: 'generate-material',
-                  label: '生成物料编码',
-                  icon: 'ri:barcode-line',
-                  selectionRequired: true,
-                  disabled: (ctx) =>
-                    !hasAuth('MdmMaterialArchive:Add') ||
-                    !validQuotationSelection(ctx.selectedRows, 'draft', false),
-                  onClick: (ctx) =>
-                    void materialDialogRef.value?.handleOpen(
-                      quotationSelection(ctx.selectedRows, false)
-                    )
-                },
                 {
                   permission: config.value.permissions.Delete,
                   key: 'batch-delete',
                   label: '批量删除',
                   icon: 'ri:delete-bin-line',
                   selectionRequired: true,
-                  disabled: (ctx) =>
-                    ctx.selectedRows.some(
-                      (row) => row.status !== 'draft' || row.workflowStatus === 'running'
-                    ),
-                  onClick: (ctx) => handleQuotationDelete(ctx.selectedRows as SalesListRow[])
+                  disabled: (ctx) => ctx.selectedRows.some((row) => row.status !== 'draft'),
+                  onClick: (ctx) => handleSalesSelectionDelete(ctx.selectedRows as SalesListRow[])
                 },
-                {
-                  permission: config.value.permissions.GenerateWorkOrder,
-                  key: 'generate-work-order',
-                  label: '转生产工单',
-                  icon: 'ri:hammer-line',
-                  selectionRequired: true,
-                  disabled: (ctx) =>
-                    !hasAuth('MesWorkOrder:Add') ||
-                    !validQuotationSelection(ctx.selectedRows, 'effective', true),
-                  onClick: (ctx) =>
-                    void workOrderDialogRef.value?.handleOpen(
-                      quotationSelection(ctx.selectedRows, true)
-                    )
-                },
-                {
-                  permission: config.value.permissions.GenerateBom,
-                  key: 'generate-bom',
-                  label: '转报价BOM',
-                  icon: 'ri:node-tree',
-                  selectionRequired: true,
-                  disabled: (ctx) =>
-                    !hasAuth('MdmBomMaintenance:Add') ||
-                    !validQuotationSelection(ctx.selectedRows, 'effective', true),
-                  onClick: (ctx) =>
-                    void bomDialogRef.value?.handleOpen(quotationSelection(ctx.selectedRows, true))
-                }
+                ...(props.kind === 'shipping_notice'
+                  ? [
+                      {
+                        permission: 'ScmLoading:Add',
+                        key: 'push-loading',
+                        label: '下推发货装车',
+                        icon: 'ri:truck-fill',
+                        selectionRequired: true,
+                        disabled: (ctx: ArtTableQueryHeaderActionContext) =>
+                          new Set(ctx.selectedRows.map((row) => row.id)).size !== 1 ||
+                          (ctx.selectedRows[0] as ScmSalesDocument)?.status !== 'submitted',
+                        onClick: (ctx: ArtTableQueryHeaderActionContext) =>
+                          openLoadingFromNotice(
+                            ctx.selectedRows[0] as ScmSalesDocument,
+                            displayMode.value === 'line'
+                              ? (ctx.selectedRows as SalesListRow[]).flatMap((row) =>
+                                  row.detailLine ? [row.detailLine] : []
+                                )
+                              : undefined
+                          )
+                      }
+                    ]
+                  : [])
               ]
-            : []
+            : props.kind === 'sales_quotation'
+              ? [
+                  {
+                    permission: config.value.permissions.GenerateMaterial,
+                    key: 'generate-material',
+                    label: '生成物料编码',
+                    icon: 'ri:barcode-line',
+                    selectionRequired: true,
+                    disabled: (ctx) =>
+                      !hasAuth('MdmMaterialArchive:Add') ||
+                      !validQuotationSelection(ctx.selectedRows, 'draft', false),
+                    onClick: (ctx) =>
+                      void materialDialogRef.value?.handleOpen(
+                        quotationSelection(ctx.selectedRows, false)
+                      )
+                  },
+                  {
+                    permission: config.value.permissions.Delete,
+                    key: 'batch-delete',
+                    label: '批量删除',
+                    icon: 'ri:delete-bin-line',
+                    selectionRequired: true,
+                    disabled: (ctx) =>
+                      ctx.selectedRows.some(
+                        (row) => row.status !== 'draft' || row.workflowStatus === 'running'
+                      ),
+                    onClick: (ctx) => handleQuotationDelete(ctx.selectedRows as SalesListRow[])
+                  },
+                  {
+                    permission: config.value.permissions.GenerateWorkOrder,
+                    key: 'generate-work-order',
+                    label: '转生产工单',
+                    icon: 'ri:hammer-line',
+                    selectionRequired: true,
+                    disabled: (ctx) =>
+                      !hasAuth('MesWorkOrder:Add') ||
+                      !validQuotationSelection(ctx.selectedRows, 'effective', true),
+                    onClick: (ctx) =>
+                      void workOrderDialogRef.value?.handleOpen(
+                        quotationSelection(ctx.selectedRows, true)
+                      )
+                  },
+                  {
+                    permission: config.value.permissions.GenerateBom,
+                    key: 'generate-bom',
+                    label: '转报价BOM',
+                    icon: 'ri:node-tree',
+                    selectionRequired: true,
+                    disabled: (ctx) =>
+                      !hasAuth('MdmBomMaintenance:Add') ||
+                      !validQuotationSelection(ctx.selectedRows, 'effective', true),
+                    onClick: (ctx) =>
+                      void bomDialogRef.value?.handleOpen(
+                        quotationSelection(ctx.selectedRows, true)
+                      )
+                  }
+                ]
+              : []
   )
 
   const columnsFactory = (): ColumnOption<SalesListRow>[] => [
-    ...((displayMode.value !== 'line' || props.kind === 'sales_quotation') &&
-    ['sales_order', 'sales_quotation', 'shipping_notice', 'loading'].includes(props.kind)
+    ...(['sales_contract', 'sales_order', 'sales_quotation', 'shipping_notice', 'loading'].includes(
+      props.kind
+    )
       ? [{ type: 'selection' as const, width: 48, fixed: 'left' as const }]
       : []),
     {
@@ -673,7 +710,8 @@
     ...(displayMode.value === 'line' ||
     props.kind === 'sales_quotation' ||
     props.kind === 'sales_contract' ||
-    props.kind === 'sales_order'
+    props.kind === 'sales_order' ||
+    props.kind === 'loading'
       ? [
           {
             prop: 'materialDescription',
@@ -684,13 +722,55 @@
           },
           {
             prop: 'quantity',
-            label: '报价/销售数量',
+            label:
+              props.kind === 'sales_quotation'
+                ? '报价数量'
+                : props.kind === 'loading'
+                  ? '装车数量'
+                  : props.kind === 'shipping_notice'
+                    ? '通知单数量'
+                    : '销售数量',
             minWidth: 130,
             align: 'right' as const,
             formatter: (row: SalesListRow) =>
-              row.detailLine?.quantity ?? row.lines.reduce((sum, line) => sum + line.quantity, 0)
+              row.detailLine?.quantity ??
+              row.lines.reduce((sum, line) => sum + Number(line.quantity), 0)
           }
         ]
+      : []),
+    ...(props.kind === 'loading'
+      ? [
+          {
+            prop: 'detailLine.deliveredQuantity',
+            label: '已交货数量',
+            width: 130,
+            align: 'right' as const,
+            formatter: (row: SalesListRow) =>
+              row.detailLine
+                ? Number(row.detailLine.deliveredQuantity ?? 0)
+                : row.lines.reduce((sum, line) => sum + Number(line.deliveredQuantity ?? 0), 0)
+          }
+        ]
+      : []),
+    ...(props.kind === 'sales_order'
+      ? [
+          { key: 'shippingNoticeQuantity', label: '已发货通知数量' },
+          { key: 'outboundQuantity', label: '已出库数量' },
+          { key: 'returnedQuantity', label: '已退库数量' },
+          { key: 'undeliveredQuantity', label: '未交货数量' }
+        ].map(({ key, label }): ColumnOption<SalesListRow> => ({
+          prop: `detailLine.${key}`,
+          label,
+          width: 140,
+          align: 'right',
+          formatter: (row) =>
+            row.detailLine
+              ? Number(row.detailLine[key as 'outboundQuantity'] ?? 0)
+              : row.lines.reduce(
+                  (sum, line) => sum + Number(line[key as 'outboundQuantity'] ?? 0),
+                  0
+                )
+        }))
       : []),
     ...(displayMode.value === 'line'
       ? [
@@ -921,6 +1001,19 @@
         icon: 'ri:send-plane-line'
       })
     }
+    if (
+      row.workflowStatus === 'running' &&
+      row.workflowInstanceId &&
+      row.workflowInitiatorUserId === userStore.getUserInfo.userId &&
+      config.value.permissions.Withdraw
+    ) {
+      actions.push({
+        auth: config.value.permissions.Withdraw,
+        key: 'withdraw-approval',
+        label: '撤回提交',
+        icon: 'ri:arrow-go-back-line'
+      })
+    }
     for (const transition of config.value.transitions[row.status] ?? []) {
       if (
         ['sales_contract', 'sales_order'].includes(props.kind) &&
@@ -964,20 +1057,8 @@
       actions.push({
         auth: 'ScmSalesOrder:Push',
         key: 'push-shipping',
-        label: '下推发货单',
+        label: '下推发货通知单',
         icon: 'ri:truck-line'
-      })
-    }
-    if (
-      props.kind === 'loading' &&
-      ['loaded', 'completed'].includes(row.status) &&
-      hasAuth('ScmLoadingOutbound:View')
-    ) {
-      actions.push({
-        auth: 'ScmLoadingOutbound:View',
-        key: 'push-loading-outbound',
-        label: '下推装车出库',
-        icon: 'ri:logout-box-r-line'
       })
     }
     if (
@@ -995,15 +1076,34 @@
     return actions
   }
 
+  const withdrawingApproval = ref(false)
+  async function handleWithdrawApproval(row: ScmSalesDocument): Promise<void> {
+    if (withdrawingApproval.value || !row.workflowInstanceId) return
+    withdrawingApproval.value = true
+    try {
+      await confirmAction(
+        `确定撤回单据 ${row.documentNo} 的提交？尚未处理的审批待办将取消，撤回后可继续修改或删除。`,
+        '撤回提交',
+        { type: 'warning', confirmButtonText: '撤回提交', cancelButtonText: '取消' }
+      )
+      await withdrawWorkflow(row.workflowInstanceId, '业务单据撤回提交')
+      await tableRef.value?.refreshUpdate()
+    } catch {
+      /* 确认取消与接口错误由组件及 API 层处理。 */
+    } finally {
+      withdrawingApproval.value = false
+    }
+  }
+
   async function handleMoreAction(row: ScmSalesDocument, key: string): Promise<void> {
     if (key === 'copy') return openDialog(row, true)
     if (key === 'delete') return handleDelete(row)
     if (key === 'generate-contract') return handleGenerateContract(row)
     if (key === 'convert') return openConversionDialog(row)
+    if (key === 'withdraw-approval') return handleWithdrawApproval(row)
     if (key === 'submit-approval') return handleSubmitApproval(row)
     if (key === 'push-shipping') return openDownpush(row.id)
     if (key === 'push-loading') return openLoadingFromNotice(row)
-    if (key === 'push-loading-outbound') return openLoadingOutbound(row)
     if (key.startsWith('status:')) {
       const transition = (config.value.transitions[row.status] ?? []).find(
         (item) => `status:${item.status}` === key
@@ -1022,7 +1122,7 @@
     })
   }
 
-  async function openDownpush(orderId: string): Promise<void> {
+  async function openDownpush(orderId: string, selectedLineIds?: string[]): Promise<void> {
     if (!orderId || !hasAuth('ScmShippingNotice:Add')) return
     const revision = ++shippingPickerRevision
     shippingSource.value = undefined
@@ -1051,6 +1151,20 @@
         return
       }
       shippingSource.value = order
+      if (selectedLineIds?.length) {
+        const selected = available.filter((line) => selectedLineIds.includes(line.lineId))
+        if (selected.length !== selectedLineIds.length)
+          throw new Error('所选明细已无可发数量，请刷新后重试')
+        shippingLinePickerRef.value?.close()
+        await shippingDialogRef.value?.handleOpen({
+          kind: 'shipping_notice',
+          initialSource: order,
+          sourceLines: selected,
+          tenantOptions: tenantOptions.value,
+          effectiveTenantId: effectiveTenantId.value
+        })
+        return
+      }
       shippingLineChoices.value = available.map((line) => ({ ...line, id: line.lineId }))
       await nextTick()
       await shippingLinePickerRef.value?.reload()
@@ -1081,7 +1195,7 @@
     void router.push('/scm/sales-management/shipping-notice')
   }
 
-  function openLoadingFromNotice(notice: ScmSalesDocument): void {
+  function openLoadingFromNotice(notice: ScmSalesDocument, sourceLines?: ScmDocumentLine[]): void {
     if (
       !hasAuth('ScmLoading:Add') ||
       notice.kind !== 'shipping_notice' ||
@@ -1091,6 +1205,7 @@
     void loadingDialogRef.value?.handleOpen({
       kind: 'loading',
       initialSource: notice,
+      sourceLines,
       tenantOptions: tenantOptions.value,
       effectiveTenantId: effectiveTenantId.value
     })
@@ -1100,20 +1215,81 @@
     void router.push('/scm/sales-management/loading')
   }
 
-  function openLoadingOutbound(loadingDocument: ScmSalesDocument): void {
-    if (
-      !hasAuth('ScmLoadingOutbound:View') ||
-      loadingDocument.kind !== 'loading' ||
-      !['loaded', 'completed'].includes(loadingDocument.status)
-    )
-      return
-    void router.push({
-      path: '/scm/sales-management/loading-outbound',
-      query: { loadingId: loadingDocument.id }
+  const salesDeleteBusy = ref(false)
+  function salesSelections(rows: SalesListRow[], whole = false): ScmSalesSelection[] {
+    const groups = new Map<string, ScmSalesSelection>()
+    for (const row of rows) {
+      const item = groups.get(row.id) ?? {
+        documentId: row.id,
+        lineIds: displayMode.value === 'line' && !whole ? [] : null
+      }
+      if (item.lineIds && row.detailLine && !item.lineIds.includes(row.detailLine.lineId))
+        item.lineIds.push(row.detailLine.lineId)
+      groups.set(row.id, item)
+    }
+    return [...groups.values()]
+  }
+  async function inspectSalesReferences(
+    rows: SalesListRow[],
+    selections: ScmSalesSelection[]
+  ): Promise<boolean> {
+    if (!deleteGuardRef.value) {
+      ElMessage.error('关联校验尚未就绪，请刷新后重试')
+      return true
+    }
+    return deleteGuardRef.value.inspect({
+      resourceLabel: config.value.title,
+      resources: [
+        ...new Map(rows.map((row) => [row.id, { id: row.id, label: row.documentNo }])).values()
+      ],
+      navigationResource: { type: 'scm_sales_document', queryKey: 'referencedRecordId' },
+      dependencyMeta: {
+        scm_sales_document: {
+          label: '关联销售单据',
+          unit: '份',
+          order: 1,
+          actionLabel: '查看关联',
+          description: '处理关联后重新检查。',
+          ...createRecordReferenceNavigation(hasAuth).scm_sales_document
+        }
+      },
+      fetchDependencies: () => fetchScmSalesDeleteDependencies(selections)
     })
+  }
+  async function handleSalesSelectionDelete(rows: SalesListRow[], whole = false): Promise<void> {
+    if (salesDeleteBusy.value || !rows.length || !hasAuth(config.value.permissions.Delete)) return
+    const selections = salesSelections(rows, whole)
+    salesDeleteBusy.value = true
+    try {
+      if (await inspectSalesReferences(rows, selections)) return
+      await confirmAction(
+        `确定删除选中的 ${rows.length} ${displayMode.value === 'line' && !whole ? '条明细' : '份单据'}吗？`,
+        `删除${config.value.title}`,
+        {
+          type: 'warning',
+          confirmButtonText: '确认删除',
+          cancelButtonText: '取消',
+          confirmButtonType: 'danger'
+        }
+      )
+      try {
+        await deleteScmSalesSelections(selections)
+        await tableRef.value?.refreshRemove()
+      } catch (error) {
+        if (!(await inspectSalesReferences(rows, selections)))
+          notifyFriendlyError(error, '删除失败，请刷新引用及单据状态后重试')
+      }
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close')
+        notifyFriendlyError(error, '删除检查失败，请重试')
+    } finally {
+      salesDeleteBusy.value = false
+    }
   }
 
   async function handleDelete(row: ScmSalesDocument): Promise<void> {
+    if (['sales_contract', 'sales_order', 'shipping_notice', 'loading'].includes(row.kind))
+      return handleSalesSelectionDelete([row], true)
     if (await inspectDeleteReferences([{ id: row.id, label: row.documentNo }])) return
     try {
       await confirmAction(
@@ -1309,12 +1485,9 @@
       customerName: row.customer?.customerName || '',
       documentDate: row.documentDate,
       deliveryDate: row.deliveryDate || '',
-      status:
-        (getDictMap.value?.scmDocumentStatus ?? []).find((item) => item.value === row.status)
-          ?.label || row.status,
+      status: userStore.getDictItemByValue('scmDocumentStatus', row.status)?.label || row.status,
       orderStatus:
-        (getDictMap.value?.scmSalesOrderStatus ?? []).find((item) => item.value === row.orderStatus)
-          ?.label ||
+        userStore.getDictItemByValue('scmSalesOrderStatus', row.orderStatus)?.label ||
         row.orderStatus ||
         '',
       salesperson: row.details.salesperson || '',
@@ -1544,7 +1717,10 @@
       documents.set(documentNo, input)
     })
     for (const input of documents.values()) {
-      input.details.quotationQuantity = input.lines.reduce((sum, line) => sum + line.quantity, 0)
+      input.details.quotationQuantity = input.lines.reduce(
+        (sum, line) => sum + Number(line.quantity),
+        0
+      )
     }
     await importScmSalesQuotations([...documents.values()])
   }

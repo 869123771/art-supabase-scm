@@ -175,7 +175,7 @@ export interface ScmDocumentLine {
   division?: string
   salesUnit?: string
   stockUnit?: string
-  quantity: number
+  quantity: number | null
   unitPrice: number
   taxRate: number
   costUnitPrice?: number
@@ -205,6 +205,9 @@ export interface ScmDocumentLine {
   binName?: string
   batchNo?: string
   deliveredQuantity?: number
+  shippingNoticeQuantity?: number
+  returnedQuantity?: number
+  undeliveredQuantity?: number
   outboundQuantity?: number
   returnQuantity?: number
   remark?: string
@@ -259,6 +262,7 @@ export interface ScmSalesDocument {
   orderStatus?: ScmSalesOrderStatus
   workflowStatus?: 'running' | 'approved' | 'rejected' | 'withdrawn' | 'cancelled'
   workflowInstanceId?: string
+  workflowInitiatorUserId?: string
   receivedAmount?: number
   documentDate: string
   deliveryDate: string | null

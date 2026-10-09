@@ -1,5 +1,10 @@
 <template>
-  <ArtDialog ref="dialogRef" size="lg">
+  <ArtDialog
+    ref="dialogRef"
+    size="lg"
+    :loading="loading || quantityLoading"
+    loading-text="正在加载转单资料…"
+  >
     <div class="flex min-w-0 flex-col gap-4">
       <ArtSectionCard
         title="选择目标单据"
@@ -17,7 +22,6 @@
         v-if="targetKind === 'purchase_order'"
         title="采购信息"
         subtitle="采购订单必须指定供应商；采购申请可在后续询比价后再确定供应商。"
-        :loading="loading"
         :error="loadError"
         :empty="!loading && !loadError && suppliers.length === 0"
         empty-title="暂无可选供应商"
@@ -26,12 +30,7 @@
       >
         <label class="flex min-w-0 flex-col gap-1 text-sm text-[var(--art-gray-700)]">
           供应商
-          <ElSelect
-            v-model="supplierId"
-            filterable
-            :loading="loading"
-            placeholder="请选择采购订单供应商"
-          >
+          <ElSelect v-model="supplierId" filterable placeholder="请选择采购订单供应商">
             <ElOption
               v-for="supplier in suppliers"
               :key="supplier.id"
@@ -46,7 +45,6 @@
         v-if="targetKind !== 'sales_contract'"
         title="本批转单明细"
         subtitle="选择本批物料并填写数量；各目标单据分别累计，不得超过报价数量。"
-        :loading="quantityLoading"
         :error="quantityError"
         @retry="retryQuantities"
       >
@@ -174,7 +172,10 @@
       const convertedQuantity = (quantities.value ?? [])
         .filter((item) => item.targetKind === targetKind.value && item.lineId === line.lineId)
         .reduce((sum, item) => sum + Number(item.quantity), 0)
-      const remainingQuantity = Math.max(0, Number((line.quantity - convertedQuantity).toFixed(3)))
+      const remainingQuantity = Math.max(
+        0,
+        Number((Number(line.quantity) - convertedQuantity).toFixed(3))
+      )
       return { ...line, convertedQuantity, remainingQuantity, transferQuantity: remainingQuantity }
     })
   }

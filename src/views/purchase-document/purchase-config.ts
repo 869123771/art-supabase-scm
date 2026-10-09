@@ -83,10 +83,11 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
     numberLabel: '采购申请单号',
     fields: [
       { key: 'department', label: '需求部门', type: 'input' },
+      { key: 'buyer', label: '采购员', type: 'input' },
       { key: 'applicant', label: '申请人', type: 'input' }
     ],
     tabs: [],
-    transitions: {},
+    transitions: { draft: [{ status: 'submitted', action: 'Submit', label: '提交' }] },
     permissions: {
       View: 'ScmPurchaseRequest:View',
       Add: 'ScmPurchaseRequest:Add',
@@ -96,7 +97,8 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
       Export: 'ScmPurchaseRequest:Export',
       Import: 'ScmPurchaseRequest:Import',
       Push: 'ScmPurchaseRequest:Push',
-      Select: 'ScmPurchaseRequest:Select'
+      Submit: 'ScmPurchaseRequest:Submit',
+      Print: 'ScmPurchaseRequest:Print'
     }
   },
   purchase_order: {
@@ -131,7 +133,6 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
       Export: 'ScmPurchaseOrder:Export',
       Import: 'ScmPurchaseOrder:Import',
       Push: 'ScmPurchaseOrder:Push',
-      Select: 'ScmPurchaseOrder:Select',
       Submit: 'ScmPurchaseOrder:Submit',
       Withdraw: 'ScmPurchaseOrder:Withdraw',
       Approve: 'ScmPurchaseOrder:Approve',
@@ -177,8 +178,7 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
       GenerateBatch: 'ScmReceiptNotice:GenerateBatch',
       GenerateSerial: 'ScmReceiptNotice:GenerateSerial',
       Import: 'ScmReceiptNotice:Import',
-      Push: 'ScmReceiptNotice:Push',
-      Select: 'ScmReceiptNotice:Select'
+      Push: 'ScmReceiptNotice:Push'
     }
   }
 }

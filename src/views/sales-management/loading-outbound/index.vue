@@ -21,6 +21,7 @@
         :search-items="searchItems"
         :api-fn="fetchPage"
         :columns-factory="columnsFactory"
+        :header-actions="headerActions"
         :search-bar-props="{ span: 6, labelWidth: 82, showExpand: true }"
         :table-props="{
           rowKey: 'id',
@@ -43,25 +44,28 @@
         </template>
       </ArtTableQuery>
 
-      <ArtDialog ref="outboundDialogRef" size="xl">
+      <ArtDialog
+        ref="outboundDialogRef"
+        size="xl"
+        :loading="stockLoading"
+        loading-text="正在加载可用库存…"
+      >
         <div class="flex min-w-0 flex-col gap-3">
           <p class="text-sm text-[var(--art-gray-700)]">
-            {{ activeRow?.loadingNo }} · {{ activeRow?.materialDescription }}：待出库
+            {{
+              activeRows.length > 1
+                ? `已选 ${activeRows.length} 条装车明细`
+                : `${activeRow?.loadingNo} · ${activeRow?.materialDescription}`
+            }}：待出库
             <strong class="tabular-nums">{{ remainingQuantity }}</strong>
             {{
               unitDisplayName(activeRow?.tenantId || '', activeRow?.baseUnit)
             }}。选择库存批次后可修改各批次出库数量。
           </p>
-          <ArtSectionCard
-            title="可用库存批次"
-            :loading="stockLoading"
-            :error="stockError"
-            @retry="retryLoad"
-          >
+          <ArtSectionCard title="可用库存批次" :error="stockError" @retry="retryLoad">
             <ArtTable
               :data="stockChoices"
               :columns="stockColumns"
-              :loading="stockLoading"
               :pagination="false"
               :max-height="430"
               row-key="id"
@@ -88,6 +92,7 @@
 <script setup lang="tsx">
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { computed, reactive, ref, watch } from 'vue'
+  import { round } from 'lodash-es'
   import { storeToRefs } from 'pinia'
   import { useRoute } from 'vue-router'
   import { ElInput, ElInputNumber, ElMessage, ElOption, ElSelect, ElTag } from 'element-plus'
@@ -98,7 +103,8 @@
   import type { SearchFormItem } from '@/components/core/forms/art-search-bar/index.vue'
   import ArtTable from '@/components/core/tables/art-table/index.vue'
   import ArtTableQuery, {
-    type ArtTableQueryExpose
+    type ArtTableQueryExpose,
+    type ArtTableQueryHeaderAction
   } from '@/components/core/tables/art-table-query/index.vue'
   import BusinessTableWorkspaceActions from '@/components/business/business-table-workspace-actions/index.vue'
   import BusinessWorkspaceHeader from '@/components/business/business-workspace-header/index.vue'
@@ -121,6 +127,9 @@
   const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
 
   interface StockChoice extends ScmOutboundStockBatch {
+    source: ScmLoadingOutboundRow
+    stockBatchId: string
+    requestKey: string
     outboundQuantity: number
     selectedSerialIds: string[]
     remark: string
@@ -139,6 +148,28 @@
     void tableRef.value?.refreshContext()
   }
   const visibleRows = ref<LoadingListRow[]>([])
+  const eligibleRows = ref<ScmLoadingOutboundRow[]>([])
+  const headerActions: ArtTableQueryHeaderAction[] = [
+    {
+      key: 'batch-outbound',
+      label: '批量出库',
+      icon: 'ri:logout-box-r-line',
+      permission: 'ScmLoadingOutbound:Issue',
+      selectionRequired: true,
+      disabled: (ctx) =>
+        !hasAuth('WmsStockOperation:Issue') ||
+        ctx.selectedRows.some((row) => row.outboundStatus === 'complete'),
+      onClick: (ctx) => {
+        const ids = ctx.selectedRows.map((row) => String(row.id))
+        const loadingIds = ctx.selectedRows.map((row) => String(row.loadingId))
+        const rows = eligibleRows.value.filter((row) =>
+          displayMode.value === 'line' ? ids.includes(row.id) : loadingIds.includes(row.loadingId)
+        )
+        return openOutboundRows(rows)
+      }
+    }
+  ]
+
   const lineProperties = new Set([
     'materialCode',
     'materialDescription',
@@ -202,8 +233,11 @@
     { label: '客户全称', key: 'customerName', type: 'input', props: { clearable: true } }
   ]
   const activeRow = ref<ScmLoadingOutboundRow>()
+  const activeRows = ref<ScmLoadingOutboundRow[]>([])
+  const rowRemaining = (row: ScmLoadingOutboundRow) =>
+    round(Math.max(0, row.loadedQuantity - row.deliveredQuantity), 3)
   const remainingQuantity = computed(() =>
-    Math.max(0, (activeRow.value?.loadedQuantity ?? 0) - (activeRow.value?.deliveredQuantity ?? 0))
+    activeRows.value.reduce((sum, row) => sum + rowRemaining(row), 0)
   )
   const outboundDialogRef = ref<ArtDialogExpose>()
   const {
@@ -214,18 +248,31 @@
     loadDetail,
     retryLoad
   } = useDetailRecord<StockChoice[]>(async () => {
-    const row = activeRow.value
-    if (!row?.projectId) throw new Error('装车明细缺少项目，请刷新列表后重试')
-    const remaining = remainingQuantity.value
-    const stocks = await fetchScmOutboundStocks(row.tenantId, row.projectId, row.materialId)
-    return {
-      data: stocks.map((stock) => ({
-        ...stock,
-        outboundQuantity: Math.min(stock.availableQuantity, remaining),
-        selectedSerialIds: [],
-        remark: ''
-      }))
+    const rows = activeRows.value
+    const stocksByMaterial = new Map<string, ScmOutboundStockBatch[]>()
+    const choices: StockChoice[] = []
+    for (const row of rows) {
+      if (!row.projectId) throw new Error('装车明细缺少项目，请刷新列表后重试')
+      const key = `${row.tenantId}:${row.projectId}:${row.materialId}`
+      let stocks = stocksByMaterial.get(key)
+      if (!stocks) {
+        stocks = await fetchScmOutboundStocks(row.tenantId, row.projectId, row.materialId)
+        stocksByMaterial.set(key, stocks)
+      }
+      choices.push(
+        ...stocks.map((stock) => ({
+          ...stock,
+          id: `${row.id}:${stock.id}`,
+          stockBatchId: stock.id,
+          source: row,
+          requestKey: crypto.randomUUID(),
+          outboundQuantity: Math.min(stock.availableQuantity, rowRemaining(row)),
+          selectedSerialIds: [],
+          remark: ''
+        }))
+      )
     }
+    return { data: choices }
   }, '现有库存加载失败，请重试')
   const stockChoices = computed(() => reactive(detail.value ?? []))
   const selectedStocks = ref<StockChoice[]>([])
@@ -266,12 +313,15 @@
             ...first,
             materialDescription: `共 ${lines.length} 项物料`,
             detailCount: lines.length,
+            loadedQuantity: lines.reduce((sum, line) => sum + line.loadedQuantity, 0),
+            deliveredQuantity: lines.reduce((sum, line) => sum + line.deliveredQuantity, 0),
             outboundStatus: lines.every((line) => line.outboundStatus === 'complete')
               ? ('complete' as const)
               : lines.some((line) => line.outboundStatus !== 'pending')
                 ? ('partial' as const)
                 : ('pending' as const)
           }))
+    eligibleRows.value = filtered.filter((row) => row.outboundStatus !== 'complete')
     const current = Math.max(1, Number(params.current) || 1)
     const size = Math.max(1, Number(params.size) || 20)
     const pageRows = displayRows.slice((current - 1) * size, current * size)
@@ -285,6 +335,7 @@
   }
 
   const columnsFactory = (): ColumnOption<LoadingListRow>[] => [
+    { type: 'selection', width: 48, fixed: 'left' },
     { prop: 'loadingNo', label: '装车单号', minWidth: 170, fixed: 'left' },
     { prop: 'projectName', label: '项目名称', minWidth: 180, showOverflowTooltip: true },
     { prop: 'customerName', label: '客户全称', minWidth: 180, showOverflowTooltip: true },
@@ -334,32 +385,34 @@
         </ElTag>
       )
     },
-    ...(displayMode.value === 'line'
-      ? [
-          {
-            prop: 'operation',
-            label: '操作',
-            width: 110,
-            fixed: 'right' as const,
-            formatter: (row: LoadingListRow) => (
-              <ArtButtonTable
-                permission="ScmLoadingOutbound:Issue"
-                label="出库"
-                icon="ri:logout-box-r-line"
-                showLabel
-                disabled={
-                  row.outboundStatus === 'complete' ||
-                  !row.materialId ||
-                  !row.projectId ||
-                  !hasAuth('ScmLoadingOutbound:Issue') ||
-                  !hasAuth('WmsStockOperation:Issue')
-                }
-                onClick={() => void openOutbound(row)}
-              />
-            )
+    {
+      prop: 'operation',
+      label: '操作',
+      width: 110,
+      fixed: 'right' as const,
+      formatter: (row: LoadingListRow) => (
+        <ArtButtonTable
+          permission="ScmLoadingOutbound:Issue"
+          label="出库"
+          icon="ri:logout-box-r-line"
+          showLabel
+          disabled={
+            row.outboundStatus === 'complete' ||
+            !row.materialId ||
+            !row.projectId ||
+            !hasAuth('ScmLoadingOutbound:Issue') ||
+            !hasAuth('WmsStockOperation:Issue')
           }
-        ]
-      : [])
+          onClick={() =>
+            void (displayMode.value === 'line'
+              ? openOutbound(row)
+              : openOutboundRows(
+                  eligibleRows.value.filter((line) => line.loadingId === row.loadingId)
+                ))
+          }
+        />
+      )
+    }
   ]
 
   const stockColumns: ColumnOption<StockChoice>[] = [
@@ -368,49 +421,49 @@
       prop: 'loadingNo',
       label: '装车单号',
       minWidth: 155,
-      formatter: () => activeRow.value?.loadingNo ?? ''
+      formatter: (row) => row.source.loadingNo ?? ''
     },
     {
       prop: 'projectName',
       label: '项目名称',
       minWidth: 155,
-      formatter: () => activeRow.value?.projectName ?? ''
+      formatter: (row) => row.source.projectName ?? ''
     },
     {
       prop: 'customerName',
       label: '客户全称',
       minWidth: 160,
-      formatter: () => activeRow.value?.customerName ?? ''
+      formatter: (row) => row.source.customerName ?? ''
     },
     {
       prop: 'contractNo',
       label: '合同号',
       minWidth: 145,
-      formatter: () => activeRow.value?.contractNo ?? ''
+      formatter: (row) => row.source.contractNo ?? ''
     },
     {
       prop: 'materialCode',
       label: '物料编码',
       minWidth: 145,
-      formatter: () => activeRow.value?.materialCode ?? ''
+      formatter: (row) => row.source.materialCode ?? ''
     },
     {
       prop: 'materialDescription',
       label: '物料描述',
       minWidth: 190,
-      formatter: () => activeRow.value?.materialDescription ?? ''
+      formatter: (row) => row.source.materialDescription ?? ''
     },
     {
       prop: 'specification',
       label: '规格型号',
       minWidth: 135,
-      formatter: () => activeRow.value?.specification ?? ''
+      formatter: (row) => row.source.specification ?? ''
     },
     {
       prop: 'baseUnit',
       label: '基本单位',
       width: 95,
-      formatter: () => unitDisplayName(activeRow.value?.tenantId || '', activeRow.value?.baseUnit)
+      formatter: (row) => unitDisplayName(row.source.tenantId, row.source.baseUnit)
     },
     {
       prop: 'outboundQuantity',
@@ -420,7 +473,7 @@
         <ElInputNumber
           v-model={row.outboundQuantity}
           min={0.001}
-          max={Math.min(row.availableQuantity, remainingQuantity.value)}
+          max={Math.min(row.availableQuantity, rowRemaining(row.source))}
           precision={3}
           controls={false}
           class="w-full!"
@@ -432,13 +485,13 @@
       prop: 'loadedQuantity',
       label: '装车数量',
       width: 100,
-      formatter: () => activeRow.value?.loadedQuantity ?? 0
+      formatter: (row) => row.source.loadedQuantity ?? 0
     },
     {
       prop: 'deliveredQuantity',
       label: '已交货数量',
       width: 120,
-      formatter: () => activeRow.value?.deliveredQuantity ?? 0
+      formatter: (row) => row.source.deliveredQuantity ?? 0
     },
     { prop: 'availableQuantity', label: '可用库存', width: 100 },
     {
@@ -479,21 +532,49 @@
 
   function onStockSelection(selected: StockChoice[]): void {
     selectedStocks.value = selected
-    let remaining = remainingQuantity.value
+    const usedLines = new Map<string, number>()
+    const usedStocks = new Map<string, number>()
     for (const stock of selected) {
-      stock.outboundQuantity = Math.min(stock.availableQuantity, remaining)
-      remaining = Math.max(0, remaining - stock.outboundQuantity)
+      const lineKey = stock.source.id
+      const batchKey = `${stock.source.tenantId}:${stock.stockBatchId}`
+      stock.outboundQuantity = round(
+        Math.max(
+          0,
+          Math.min(
+            rowRemaining(stock.source) - (usedLines.get(lineKey) ?? 0),
+            stock.availableQuantity - (usedStocks.get(batchKey) ?? 0)
+          )
+        ),
+        3
+      )
+      usedLines.set(lineKey, (usedLines.get(lineKey) ?? 0) + stock.outboundQuantity)
+      usedStocks.set(batchKey, (usedStocks.get(batchKey) ?? 0) + stock.outboundQuantity)
     }
   }
 
-  async function openOutbound(row: ScmLoadingOutboundRow): Promise<void> {
-    if (!row.projectId || !row.materialId || row.outboundStatus === 'complete') return
+  function openOutbound(row: ScmLoadingOutboundRow): Promise<void> {
+    return openOutboundRows([row])
+  }
+  async function openOutboundRows(rows: ScmLoadingOutboundRow[]): Promise<void> {
+    if (!hasAuth('ScmLoadingOutbound:Issue') || !hasAuth('WmsStockOperation:Issue')) return
+    const pending = rows.filter(
+      (row) => row.projectId && row.materialId && row.outboundStatus !== 'complete'
+    )
+    if (!pending.length) {
+      ElMessage.warning('所选装车单暂无待出库明细')
+      return
+    }
+    activeRows.value = pending
+    const row = pending[0]
     activeRow.value = row
     const revision = ++openRevision
     openDetail(row.id)
     selectedStocks.value = []
     await outboundDialogRef.value?.handleOpen(undefined, {
-      title: `销售出库 · ${row.loadingNo}`,
+      title:
+        pending.length > 1
+          ? `批量销售出库 · ${pending.length} 条明细`
+          : `销售出库 · ${row.loadingNo}`,
       confirmText: '执行出库',
       onOpen: () => loadDetail(row.id),
       onClose: () => {
@@ -508,10 +589,27 @@
           ElMessage.warning('请选择至少一个库存批次并填写出库数量')
           return false
         }
-        const sum = selected.reduce((total, stock) => total + stock.outboundQuantity, 0)
-        if (sum > remainingQuantity.value) {
-          ElMessage.warning('本次出库数量不能超过装车明细剩余数量')
+        if (selected.length > 100) {
+          ElMessage.warning('单次最多出库 100 项库存批次，请分批办理')
           return false
+        }
+        const lineTotals = new Map<string, number>()
+        const stockTotals = new Map<string, number>()
+        for (const stock of selected) {
+          const lineKey = stock.source.id
+          const stockKey = `${stock.source.tenantId}:${stock.stockBatchId}`
+          const lineTotal = round((lineTotals.get(lineKey) ?? 0) + stock.outboundQuantity, 3)
+          const stockTotal = round((stockTotals.get(stockKey) ?? 0) + stock.outboundQuantity, 3)
+          if (
+            !Number.isFinite(stock.outboundQuantity) ||
+            lineTotal > rowRemaining(stock.source) ||
+            stockTotal > stock.availableQuantity
+          ) {
+            ElMessage.warning('本次出库数量不能超过装车明细剩余数量或同批次可用库存')
+            return false
+          }
+          lineTotals.set(lineKey, lineTotal)
+          stockTotals.set(stockKey, stockTotal)
         }
         if (
           selected.some(
@@ -527,13 +625,13 @@
         try {
           await postScmLoadingOutbound(
             selected.map((stock) => ({
-              loadingId: row.loadingId,
-              loadingLineId: row.loadingLineId,
-              batchId: stock.id,
+              loadingId: stock.source.loadingId,
+              loadingLineId: stock.source.loadingLineId,
+              batchId: stock.stockBatchId,
               quantity: stock.outboundQuantity,
               serialIds: stock.selectedSerialIds,
               remark: stock.remark,
-              requestKey: crypto.randomUUID()
+              requestKey: stock.requestKey
             }))
           )
           if (revision !== openRevision) return false

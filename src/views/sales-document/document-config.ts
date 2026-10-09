@@ -55,6 +55,7 @@ const salesQuotation: ScmDocumentConfig = {
     GenerateWorkOrder: 'ScmSalesQuotationDoc:GenerateWorkOrder',
     GenerateBom: 'ScmSalesQuotationDoc:GenerateBom',
     Submit: 'ScmSalesQuotationDoc:Submit',
+    Withdraw: 'ScmSalesQuotationDoc:Withdraw',
     Activate: 'ScmSalesQuotationDoc:Activate',
     Expire: 'ScmSalesQuotationDoc:Expire'
   },

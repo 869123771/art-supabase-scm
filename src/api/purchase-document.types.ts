@@ -22,7 +22,7 @@ export interface ScmPurchaseLine {
   stockUnit?: string
   stockQuantity?: number
   baseQuantity?: number
-  quantity: number
+  quantity: number | null
   unitPrice: number
   taxInclusiveUnitPrice?: number
   taxRate: number
@@ -34,6 +34,9 @@ export interface ScmPurchaseLine {
   applicant?: string
   applicantName?: string
   contractNo?: string
+  contractLineNo?: number
+  pricingContractId?: string
+  pricingContractLineId?: string
   warehouse?: string
   location?: string
   warehouseId?: string

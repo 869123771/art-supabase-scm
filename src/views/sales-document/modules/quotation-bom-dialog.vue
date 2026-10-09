@@ -1,10 +1,9 @@
 <template>
-  <ArtDialog ref="dialogRef" size="lg">
+  <ArtDialog ref="dialogRef" :loading="loading" loading-text="正在加载父件物料…" size="lg">
     <div class="flex min-w-0 flex-col gap-4">
       <ArtSectionCard
         title="报价 BOM 父件"
         subtitle="选择已建档的成品或半成品物料作为父件；报价明细将成为组件。"
-        :loading="loading"
         :error="loadError"
         @retry="retryLoad"
       >

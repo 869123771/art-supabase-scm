@@ -12,7 +12,7 @@
       }}</p>
       <div class="flex flex-wrap gap-2">
         <ElButton
-          v-if="!contract && !order && !shipping"
+          v-if="!contract && !order && !shipping && !loading"
           :disabled="disabled || manualDisabled || lines.length >= 200"
           @click="addBlankLine"
         >
@@ -52,6 +52,7 @@
       </div>
     </div>
     <ArtTable
+      :key="quantityOptional ? 'optional-quantity' : 'required-quantity'"
       ref="tableRef"
       :data="lines"
       :columns="columns"
@@ -61,7 +62,7 @@
       border
       show-summary
       :summary-method="summaryMethod"
-      :height="Math.min(450, 94 + lines.length * 53)"
+      :max-height="450"
       scrollbar-always-on
       class="scm-quotation-summary-table w-full"
       :empty-text="
@@ -137,7 +138,7 @@
     buildMaterialCategoryNavigation,
     getMaterialCategoryIds
   } from '@/utils/business/material-category'
-  import type { MaterialSelectCategory } from '@/components/business/art-material-select/index.vue'
+  import type { MaterialSelectCategory } from '@/components/business/art-material-select/types'
   import type { DataSelectFetchParams } from '@/components/core/forms/art-data-select/types'
   import { formatUnitDisplayName } from '@/utils/business/unit-display'
   import { omit } from 'lodash-es'
@@ -164,6 +165,7 @@
   import { normalizeStringList } from '@/utils/form/normalize'
   import {
     fetchScmOrderSourceAllocations,
+    fetchScmQuoteLineAllocations,
     type ScmDocumentLine,
     type ScmMaterialOption,
     type ScmSalesDocument
@@ -177,6 +179,8 @@
     quotationTaxInclusivePrice
   } from '../quotation-pricing'
 
+  import { fillScmLineDefaults } from '../line-defaults'
+
   defineOptions({ name: 'QuotationLineTable' })
   const lines = defineModel<ScmDocumentLine[]>('lines', { required: true })
   const props = withDefaults(
@@ -186,6 +190,7 @@
       units?: Array<{ id: string; code: string; name: string }>
       disabled: boolean
       quotation?: boolean
+      quantityOptional?: boolean
       contract?: boolean
       order?: boolean
       operational?: boolean
@@ -207,6 +212,7 @@
       quotation: false,
       displayUnitName: formatUnitDisplayName,
       units: () => [],
+      quantityOptional: false,
       contract: false,
       order: false,
       operational: false,
@@ -275,6 +281,8 @@
     documentNo: string
     sourceDocumentId: string
     lineNo: number
+    projectName: string
+    convertedQuantity: number
     sourceQuantity: number
     availableQuantity: number
   }
@@ -288,6 +296,13 @@
       minWidth: 160
     },
     { prop: 'lineNo', label: '行号', width: 80, align: 'right' },
+    { prop: 'projectName', label: '项目名称', minWidth: 160 },
+    {
+      prop: 'baseUnit',
+      label: '基本单位',
+      width: 105,
+      formatter: (row) => props.displayUnitName(row.baseUnit)
+    },
     { prop: 'materialCode', label: '物料编码', minWidth: 150 },
     {
       prop: 'materialDescription',
@@ -326,7 +341,11 @@
               formatCurrencyValue(calculateContractLine(row).total)
           }
         ]
-      : [{ prop: 'quantity', label: '数量', width: 90, align: 'right' as const }])
+      : [
+          { prop: 'sourceQuantity', label: '报价数量', width: 105, align: 'right' as const },
+          { prop: 'convertedQuantity', label: '已转数量', width: 105, align: 'right' as const },
+          { prop: 'availableQuantity', label: '待转数量', width: 105, align: 'right' as const }
+        ])
   ])
   function materialIdentity(line: ScmDocumentLine): string {
     return (
@@ -352,14 +371,13 @@
       .flatMap((document) =>
         document.lines.map((line, index) => {
           const allocated = contractAllocations.value.get(`${document.id}:${line.lineId}`) ?? 0
-          const remaining =
-            sourcePickerKind.value === 'sales_contract'
-              ? Math.max(0, line.quantity - allocated)
-              : line.quantity
+          const remaining = Math.max(0, Number(line.quantity) - allocated)
           return {
             ...line,
             quantity: remaining,
-            sourceQuantity: line.quantity,
+            sourceQuantity: Number(line.quantity),
+            convertedQuantity: allocated,
+            projectName: document.project?.projectName || '—',
             availableQuantity: remaining,
             documentNo: document.documentNo,
             sourceDocumentId: document.id,
@@ -391,8 +409,10 @@
       second ? materialFor(line)?.auxiliaryUnit2Id : materialFor(line)?.auxiliaryUnitId,
       materialFor(line)
     )
-    return props.shipping
-      ? calculated
+    return (props.shipping && line.sourceDocumentId) || props.loading
+      ? second
+        ? line.auxiliaryQuantity2
+        : line.auxiliaryQuantity
       : (calculated ?? (second ? line.auxiliaryQuantity2 : line.auxiliaryQuantity))
   }
 
@@ -405,7 +425,7 @@
       materialDescription: '',
       materialSource: '',
       deliveryDate: props.order ? props.defaultDeliveryDate || '' : undefined,
-      quantity: 1,
+      quantity: props.order || props.quantityOptional ? null : 1,
       unitPrice: 0,
       taxRate: 13,
       costUnitPrice: 0,
@@ -458,6 +478,25 @@
           (item) => item.id === line.baseUnit || item.code === line.baseUnit
         )
         if (unit) line.baseUnit = unit.name
+      }
+    },
+    { immediate: true }
+  )
+
+  // 只在新增明细或物料选项到达时补齐，输入过程中（包括手动清空）不反复覆盖。
+  const initializedLines = new WeakMap<ScmDocumentLine, ScmMaterialOption | undefined>()
+  watch(
+    [() => props.materials, () => lines.value],
+    () => {
+      for (const line of lines.value) {
+        const material = props.materials.find((item) => item.id === line.materialId)
+        if (initializedLines.has(line) && initializedLines.get(line) === material) continue
+        fillScmLineDefaults(
+          line,
+          material,
+          props.operational ? props.defaultDeliveryDate : undefined
+        )
+        initializedLines.set(line, material)
       }
     },
     { immediate: true }
@@ -703,7 +742,7 @@
           }
         ]
       : []),
-    ...(props.contract || props.order
+    ...(props.contract || props.order || props.shipping || props.loading
       ? [
           {
             prop: 'auxiliaryQuantity',
@@ -717,7 +756,7 @@
             label: '辅助单位',
             width: 100,
             formatter: (row: ScmDocumentLine) =>
-              props.displayUnitName(materialFor(row)?.auxiliaryUnit ?? row.auxiliaryUnit ?? '—')
+              props.displayUnitName(row.auxiliaryUnit || materialFor(row)?.auxiliaryUnit || '—')
           },
           {
             prop: 'auxiliaryQuantity2',
@@ -731,7 +770,7 @@
             label: '辅助单位2',
             width: 100,
             formatter: (row: ScmDocumentLine) =>
-              props.displayUnitName(materialFor(row)?.auxiliaryUnit2 ?? row.auxiliaryUnit2 ?? '—')
+              props.displayUnitName(row.auxiliaryUnit2 || materialFor(row)?.auxiliaryUnit2 || '—')
           }
         ]
       : []),
@@ -767,14 +806,17 @@
       label: '数量',
       width: 120,
       align: 'right',
-      required: true,
+      required: !props.quantityOptional,
       rules: {
-        validator: ({ value }) => Number.isFinite(Number(value)) && Number(value) > 0,
+        validator: ({ value }) =>
+          (props.quantityOptional && value == null) ||
+          (Number.isFinite(Number(value)) && Number(value) > 0),
         message: '数量必须大于 0'
       },
       formatter: (row) => (
         <ElInputNumber
-          v-model={row.quantity}
+          modelValue={row.quantity ?? undefined}
+          onUpdate:modelValue={(value: number | undefined) => (row.quantity = value ?? null)}
           min={0.001}
           precision={3}
           controls={false}
@@ -783,24 +825,6 @@
         />
       )
     },
-    ...(props.shipping
-      ? [
-          {
-            prop: 'auxiliaryQuantity',
-            label: '辅助数量',
-            width: 110,
-            align: 'right' as const,
-            formatter: (row: ScmDocumentLine) => String(auxiliaryQuantity(row) ?? '—')
-          },
-          {
-            prop: 'auxiliaryUnit',
-            label: '辅助单位',
-            width: 100,
-            formatter: (row: ScmDocumentLine) =>
-              props.displayUnitName(materialFor(row)?.auxiliaryUnit ?? '—')
-          }
-        ]
-      : []),
     ...(props.shipping
       ? []
       : [
@@ -850,7 +874,7 @@
                   width: 160,
                   align: 'right',
                   formatter: (row: ScmDocumentLine) =>
-                    formatCurrencyValue(row.quantity * Number(row.costUnitPrice || 0))
+                    formatCurrencyValue(Number(row.quantity) * Number(row.costUnitPrice || 0))
                 },
                 {
                   prop: 'quoteFactor',
@@ -1035,7 +1059,7 @@
     const totals = lines.value.reduce(
       (result, line) => {
         const calculated = calculateLine(line)
-        result.quantity += line.quantity
+        result.quantity += Number(line.quantity)
         result.auxiliaryQuantity += auxiliaryQuantity(line) ?? 0
         result.amount += calculated.amount
         result.tax += calculated.tax
@@ -1093,6 +1117,17 @@
     await openSourcePicker('sales_quotation')
   }
   async function openSourcePicker(sourceKind: 'sales_quotation' | 'sales_contract'): Promise<void> {
+    if (sourceKind === 'sales_quotation') {
+      try {
+        contractAllocations.value = await fetchScmQuoteLineAllocations(
+          props.quotationDocuments.map((item) => item.id),
+          props.contract ? 'sales_contract' : 'sales_order',
+          props.documentId
+        )
+      } catch {
+        return
+      }
+    }
     if (props.order && sourceKind === 'sales_contract') {
       if (!props.tenantId || !props.projectId || !props.customerId) {
         ElMessage.warning('请先选择项目和客户，再参选合同明细')
@@ -1151,7 +1186,18 @@
         lines.value = [
           ...lines.value,
           ...selectedQuotationLines.value.map((source, index) => ({
-            ...omit(source, ['sourceQuantity', 'availableQuantity']),
+            ...omit(source, [
+              'sourceQuantity',
+              'availableQuantity',
+              'convertedQuantity',
+              'projectName'
+            ]),
+            salesUnit:
+              materialFor(source)?.salesUnit ||
+              materialFor(source)?.baseUnitName ||
+              source.salesUnit ||
+              source.baseUnit ||
+              '',
             lineId: crypto.randomUUID(),
             lineNo:
               Math.max(0, ...lines.value.map((line) => Number(line.lineNo) || 0)) +

@@ -99,7 +99,9 @@
                       formatCurrencyValue(
                         record.kind === 'sales_order' || record.kind === 'sales_contract'
                           ? calculateContractLine(line).amount
-                          : line.quantity * line.unitPrice * (1 - (line.discountRate || 0) / 100)
+                          : Number(line.quantity) *
+                              line.unitPrice *
+                              (1 - (line.discountRate || 0) / 100)
                       )
                     }}</div></div
                   >
@@ -155,7 +157,10 @@
             :key="clause.id"
             class="border-b border-[var(--el-border-color-lighter)] py-2 text-sm last:border-0"
           >
-            <strong>{{ clauseLabel(clause.title) }}</strong
+            <strong>{{
+              userStore.getDictItemByValue('commonContractClauseType', clause.title)?.label ||
+              clause.title
+            }}</strong
             ><p class="mt-1 whitespace-pre-wrap text-[var(--art-gray-600)]">{{ clause.content }}</p>
           </div>
         </ArtSectionCard>
@@ -206,7 +211,6 @@
   import { createFriendlySupabaseError } from '@/utils/supabase/error'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { useUserStore } from '@/store/modules/user'
-  import { storeToRefs } from 'pinia'
   import { fetchQuoteExpenseOptions, fetchScmSalesDocument, type ScmSalesDocument } from '@scm/api'
   import { scmDocumentConfigs } from '../document-config'
   import { calculateContractLine, calculateQuotationLine } from '../quotation-pricing'
@@ -260,7 +264,7 @@
   const quotationTaxInclusiveTotal = computed(() =>
     record.value.lines.reduce((sum, line) => sum + calculateQuotationLine(line).total, 0)
   )
-  const { getDictMap } = storeToRefs(useUserStore())
+  const userStore = useUserStore()
   const feeNames = ref(new Map<string, string>())
   const feeLoading = ref(false)
   const feeError = ref<Error | null>(null)
@@ -283,8 +287,6 @@
       if (revision === feeRevision) feeLoading.value = false
     }
   }
-  const clauseLabel = (value: string): string =>
-    getDictMap.value?.commonContractClauseType?.find((item) => item.value === value)?.label || value
 
   const headerItems = computed<ArtDescriptionItem<ScmSalesDocument>[]>(() => [
     { key: 'documentNo', label: '单据编号', field: 'documentNo' },
@@ -292,8 +294,7 @@
       key: 'status',
       label: '单据状态',
       value: (row: ScmSalesDocument) =>
-        getDictMap.value?.scmDocumentStatus?.find((item) => item.value === row.status)?.label ||
-        row.status
+        userStore.getDictItemByValue('scmDocumentStatus', row.status)?.label || row.status
     },
     ...(record.value.kind === 'sales_contract'
       ? [
@@ -301,9 +302,7 @@
             key: 'contractStatus',
             label: '合同状态',
             value: (row: ScmSalesDocument) =>
-              getDictMap.value?.scmSalesContractStatus?.find(
-                (item) => item.value === row.contractStatus
-              )?.label ||
+              userStore.getDictItemByValue('scmSalesContractStatus', row.contractStatus)?.label ||
               row.contractStatus ||
               '--'
           }
@@ -315,8 +314,7 @@
             key: 'orderStatus',
             label: '订单状态',
             value: (row: ScmSalesDocument) =>
-              getDictMap.value?.scmSalesOrderStatus?.find((item) => item.value === row.orderStatus)
-                ?.label ||
+              userStore.getDictItemByValue('scmSalesOrderStatus', row.orderStatus)?.label ||
               row.orderStatus ||
               '--'
           }

@@ -1,5 +1,5 @@
 <template>
-  <ArtDialog ref="dialogRef" size="lg">
+  <ArtDialog ref="dialogRef" :loading="loading" loading-text="正在加载工单配置…" size="lg">
     <div class="flex min-w-0 flex-col gap-4">
       <ArtSectionCard
         title="选择报价物料清单"
@@ -20,7 +20,6 @@
       <ArtSectionCard
         title="生产工单配置"
         subtitle="每条选中明细生成一张工单，项目从报价单带入。"
-        :loading="loading"
         :error="loadError"
         @retry="retryLoad"
       >

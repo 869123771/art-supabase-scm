@@ -1,1 +1,0 @@
-import{Qi as e,oa as t,wa as n}from"./index-Y9p_CAja.js";import{t as r}from"./art-permission-guard-BEXHCVph.js";var i=t({name:`Exception403`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{"force-denied":``,"resource-name":`目标页面`,"show-relogin":``,"viewport-centered":``}))}});export{i as default};

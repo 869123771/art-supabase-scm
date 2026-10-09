@@ -57,6 +57,9 @@
       </ArtTableQuery>
       <PurchaseDialog ref="dialogRef" @success="handleSaved" />
       <PurchaseDetailDrawer ref="drawerRef" />
+      <MasterDataDeleteGuard ref="deleteGuardRef" />
+      <PurchaseBuyerDialog ref="buyerDialogRef" @success="handleSaved('edit')" />
+      <PurchaseRequestPrintSheet ref="printSheetRef" />
       <ArtTableMultipleSelect
         v-if="kind === 'receipt_notice' || kind === 'purchase_order'"
         ref="pushLineSelectRef"
@@ -89,6 +92,9 @@
   import { storeToRefs } from 'pinia'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import dayjs from 'dayjs'
+  import { uniqBy, groupBy } from 'lodash-es'
+  import MasterDataDeleteGuard from '@/components/business/master-data-delete-guard/index.vue'
+  import { createRecordReferenceNavigation } from '@/components/business/master-data-delete-guard/record-navigation'
   import { ElMessage } from 'element-plus'
   import { useRoute, useRouter } from 'vue-router'
   import { useMasterDataDeleteProcessingContext } from '@/hooks/core/useMasterDataDeleteProcessing'
@@ -131,6 +137,9 @@
   } from '@/utils/business/document-detail-list'
   import {
     deleteScmPurchaseDocument,
+    batchScmPurchaseDocuments,
+    fetchScmPurchaseDeleteDependencies,
+    type ScmPurchaseSelection,
     createScmPurchaseDocument,
     fetchScmMaterialOptions,
     fetchScmPurchaseDocument,
@@ -140,8 +149,7 @@
     fetchScmReceiptOrderLineChoices,
     fetchScmSupplierOptions,
     fetchScmPurchaseDocuments,
-    fetchPushedOrderLineIds,
-    pushScmOrderLines,
+    pushScmOrders,
     transitionScmPurchaseDocument,
     type ScmOrderTargetKind,
     type ScmPurchaseDocument,
@@ -152,6 +160,8 @@
   import { purchaseConfigs, type PurchaseTransition } from './purchase-config'
   import PurchaseDialog from './modules/purchase-dialog.vue'
   import PurchaseDetailDrawer from './modules/purchase-detail-drawer.vue'
+  import PurchaseBuyerDialog from './modules/purchase-buyer-dialog.vue'
+  import PurchaseRequestPrintSheet from './modules/purchase-request-print-sheet.vue'
 
   defineOptions({ name: 'ScmPurchaseWorkspace' })
   const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
@@ -166,7 +176,9 @@
     'detailLine.quantity',
     'detailLine.unit',
     'detailLine.unitPrice',
-    'detailLine.taxRate'
+    'detailLine.taxRate',
+    'purchased',
+    'remaining'
   ])
   function mergeDocumentCells({
     rowIndex,
@@ -176,12 +188,18 @@
     column: { property?: string }
   }) {
     return displayMode.value === 'line'
-      ? documentGroupSpan(visibleRows.value, rowIndex, column.property, lineProperties)
+      ? column.property
+        ? documentGroupSpan(visibleRows.value, rowIndex, column.property, lineProperties)
+        : ([1, 1] as [number, number])
       : ([1, 1] as [number, number])
   }
   const config = computed(() => purchaseConfigs[props.kind])
   const { confirmAction } = useArtFeedback()
   const { hasAuth } = useAuth()
+  const deleteGuardRef = ref<InstanceType<typeof MasterDataDeleteGuard>>()
+  const buyerDialogRef = ref<InstanceType<typeof PurchaseBuyerDialog>>()
+  const printSheetRef = ref<InstanceType<typeof PurchaseRequestPrintSheet>>()
+  const batchBusy = ref(false)
   const router = useRouter()
   const userStore = useUserStore()
   const { isPlatformSuper } = storeToRefs(userStore)
@@ -220,6 +238,8 @@
       generate?: 'batch' | 'serial'
       initialSource?: ScmPurchaseDocument
       initialSourceId?: string
+      initialRequests?: Array<{ documentId: string; lineIds: string[] | null }>
+      initialOrders?: Array<{ documentId: string; lineIds: string[] | null }>
       openLineSelector?: boolean
       tenantOptions: Array<{ label: string; value: string }>
       effectiveTenantId: string | null
@@ -237,9 +257,7 @@
   const pushLineChoices = ref<ScmPurchaseLine[]>([])
   const pushReceiptId = ref('')
   const pushTargetKind = ref<ScmReceiptTargetKind>('inbound')
-  const pushOrderId = ref('')
   const pushTenantId = ref('')
-  const pushOrderTargetKind = ref<ScmOrderTargetKind>('purchase_inbound')
   const orderPushTargets: Array<{ kind: ScmOrderTargetKind; label: string; permission: string }> = [
     { kind: 'purchase_inbound', label: '下推 WMS 采购入库', permission: 'WmsPurchaseInbound:Add' }
   ]
@@ -283,7 +301,7 @@
   )
   const requestImportColumns = [
     { key: 'requestKey', title: '导入分组号', required: true },
-    { key: 'projectCode', title: '项目编码', required: true },
+    { key: 'projectCode', title: '项目编码' },
     { key: 'documentDate', title: '申请日期（YYYY-MM-DD）', required: true },
     { key: 'materialCode', title: '物料编码', required: true },
     { key: 'quantity', title: '数量', required: true },
@@ -296,7 +314,7 @@
   ]
   const receiptImportColumns = [
     { key: 'receiptKey', title: '导入分组号', required: true },
-    { key: 'projectCode', title: '项目编码', required: true },
+    { key: 'projectCode', title: '项目编码' },
     { key: 'supplierCode', title: '供应商编码', required: true },
     { key: 'documentDate', title: '收料日期（YYYY-MM-DD）', required: true },
     { key: 'purchaseOrderNo', title: '采购订单号' },
@@ -400,15 +418,6 @@
       }
     },
     {
-      permission: config.value.permissions.Select,
-      key: 'select-request-lines',
-      label: '选单',
-      icon: 'ri:file-list-3-line',
-      hidden: !['purchase_request', 'purchase_order', 'receipt_notice'].includes(props.kind),
-      disabled: !hasAuth(config.value.permissions.Add),
-      onClick: () => openDialog(undefined, false, undefined, true)
-    },
-    {
       permission: config.value.permissions.Add,
       type: 'add',
       label: `新增${config.value.title}`,
@@ -446,123 +455,148 @@
     }
   ])
 
+  const orderSelectionActions = computed<ArtTableQueryHeaderAction[]>(() => [
+    {
+      permission: 'ScmPurchaseOrder:Push',
+      key: 'push-receipt-notice',
+      label: '下推收料通知单',
+      icon: 'ri:inbox-line',
+      selectionRequired: true,
+      disabled: (ctx) =>
+        batchBusy.value ||
+        !hasAuth('ScmReceiptNotice:Add') ||
+        ctx.selectedRows.some((row) => !['approved', 'completed'].includes(String(row.status))) ||
+        uniqBy(
+          ctx.selectedRows,
+          (row) => `${row.tenantId}:${row.projectId ?? ''}:${row.supplierId}`
+        ).length !== 1,
+      onClick: (ctx) => pushOrdersToReceipt(purchaseRows(ctx.selectedRows))
+    },
+    ...orderPushTargets.map((target): ArtTableQueryHeaderAction => ({
+      permission: 'ScmPurchaseOrder:Push',
+      key: `push-${target.kind}`,
+      label: target.label,
+      icon: 'ri:arrow-right-line',
+      selectionRequired: true,
+      disabled: (ctx) =>
+        batchBusy.value ||
+        !hasAuth(target.permission) ||
+        ctx.selectedRows.some((row) => !['approved', 'completed'].includes(String(row.status))),
+      onClick: (ctx) => pushOrdersToWms(purchaseRows(ctx.selectedRows))
+    }))
+  ])
   const selectionActions = computed<ArtTableQueryHeaderAction[]>(() =>
-    displayMode.value === 'line'
-      ? []
-      : props.kind === 'purchase_request'
-        ? [
-            {
-              permission: config.value.permissions.Push,
-              key: 'push-purchase-order',
-              label: '下推采购订单',
-              icon: 'ri:arrow-right-line',
-              selectionRequired: true,
-              disabled: (ctx) => ctx.selectedRows.length !== 1 || !hasAuth('ScmPurchaseOrder:Add'),
-              onClick: (ctx) => void pushRequest(String(ctx.selectedRows[0]?.id ?? ''))
-            }
-          ]
-        : props.kind === 'purchase_order'
-          ? [
-              {
-                permission: config.value.permissions.Push,
-                key: 'push-receipt-notice',
-                label: '下推收料通知单',
-                icon: 'ri:inbox-line',
-                selectionRequired: true,
-                disabled: (ctx) =>
-                  ctx.selectedRows.length !== 1 ||
-                  !['approved', 'completed'].includes(String(ctx.selectedRows[0]?.status)) ||
-                  !hasAuth('ScmReceiptNotice:Add'),
-                onClick: (ctx) => void pushOrderToReceipt(String(ctx.selectedRows[0]?.id ?? ''))
-              },
-              ...orderPushTargets.map((target): ArtTableQueryHeaderAction => ({
-                permission: config.value.permissions.Push,
-                key: `push-${target.kind}`,
-                label: target.label,
-                icon: 'ri:arrow-right-line',
-                selectionRequired: true,
-                disabled: (ctx) =>
-                  ctx.selectedRows.length !== 1 ||
-                  !['approved', 'completed'].includes(String(ctx.selectedRows[0]?.status)) ||
-                  !hasAuth(target.permission),
-                onClick: (ctx) =>
-                  void openPushOrderLines(String(ctx.selectedRows[0]?.id ?? ''), target.kind)
-              }))
-            ]
-          : props.kind === 'receipt_notice'
-            ? [
+    ['purchase_request', 'purchase_contract', 'purchase_order'].includes(props.kind)
+      ? [
+          {
+            permission: config.value.permissions.Delete,
+            key: 'batch-delete',
+            label: '批量删除',
+            icon: 'ri:delete-bin-line',
+            selectionRequired: true,
+            disabled: (ctx) =>
+              batchBusy.value || ctx.selectedRows.some((row) => row.status !== 'draft'),
+            onClick: (ctx) => handleBatchDelete(purchaseRows(ctx.selectedRows))
+          },
+          ...(props.kind === 'purchase_request' || props.kind === 'purchase_order'
+            ? ([
                 {
-                  permission: config.value.permissions.Push,
-                  key: 'push-inbound',
-                  label: '下推收料入库',
-                  icon: 'ri:inbox-line',
+                  permission: config.value.permissions.Copy,
+                  key: 'batch-copy',
+                  label: '批量复制',
+                  icon: 'ri:file-copy-line',
+                  selectionRequired: true,
+                  disabled: () => batchBusy.value,
+                  onClick: (ctx) => runBatch('copy', purchaseRows(ctx.selectedRows))
+                },
+                {
+                  permission: config.value.permissions.Submit,
+                  key: 'batch-submit',
+                  label: '提交',
+                  icon: 'ri:send-plane-line',
                   selectionRequired: true,
                   disabled: (ctx) =>
-                    ctx.selectedRows.length !== 1 ||
-                    ctx.selectedRows[0]?.status !== 'completed' ||
-                    !hasAuth('WmsReceiptInbound:Add'),
+                    batchBusy.value || ctx.selectedRows.some((row) => row.status !== 'draft'),
+                  onClick: (ctx) => runBatch('submit', purchaseRows(ctx.selectedRows))
+                },
+                {
+                  permission: config.value.permissions.Edit,
+                  key: 'batch-buyer',
+                  hidden: props.kind !== 'purchase_request',
+                  label: '设置采购员',
+                  icon: 'ri:user-line',
+                  selectionRequired: true,
+                  disabled: (ctx) =>
+                    batchBusy.value ||
+                    ctx.selectedRows.some((row) => row.status !== 'draft') ||
+                    uniqBy(ctx.selectedRows, 'tenantId').length !== 1,
                   onClick: (ctx) =>
-                    void openPushLines(String(ctx.selectedRows[0]?.id ?? ''), 'inbound')
+                    buyerDialogRef.value?.handleOpen(
+                      toSelections(purchaseRows(ctx.selectedRows)),
+                      ctx.selectedRows[0].tenantId
+                    )
+                },
+                {
+                  permission: config.value.permissions.Print,
+                  key: 'batch-print',
+                  hidden: props.kind !== 'purchase_request',
+                  label: '打印',
+                  icon: 'ri:printer-line',
+                  selectionRequired: true,
+                  onClick: (ctx) => printRequests(purchaseRows(ctx.selectedRows))
                 },
                 {
                   permission: config.value.permissions.Push,
-                  key: 'push-asset-payable',
-                  label: '下推资产应付',
-                  icon: 'ri:bill-line',
+                  key: 'push-purchase-order',
+                  hidden: props.kind !== 'purchase_request',
+                  label: '下推采购订单',
+                  icon: 'ri:arrow-right-line',
                   selectionRequired: true,
                   disabled: (ctx) =>
-                    ctx.selectedRows.length !== 1 ||
-                    ctx.selectedRows[0]?.status !== 'completed' ||
-                    !hasAuth('FinanceAssetPayable:Add'),
-                  onClick: (ctx) =>
-                    void openPushLines(String(ctx.selectedRows[0]?.id ?? ''), 'asset_payable')
-                }
-              ]
-            : []
+                    batchBusy.value ||
+                    !hasAuth('ScmPurchaseOrder:Add') ||
+                    ctx.selectedRows.some((row) =>
+                      ['cancelled', 'completed'].includes(row.status)
+                    ) ||
+                    uniqBy(ctx.selectedRows, (row) => `${row.tenantId}:${row.projectId ?? ''}`)
+                      .length !== 1,
+                  onClick: (ctx) => pushRequests(purchaseRows(ctx.selectedRows))
+                },
+                ...(props.kind === 'purchase_order' ? orderSelectionActions.value : [])
+              ] satisfies ArtTableQueryHeaderAction[])
+            : [])
+        ]
+      : props.kind === 'receipt_notice'
+        ? [
+            {
+              permission: config.value.permissions.Push,
+              key: 'push-inbound',
+              label: '下推收料入库',
+              icon: 'ri:inbox-line',
+              selectionRequired: true,
+              disabled: (ctx) =>
+                ctx.selectedRows.length !== 1 ||
+                ctx.selectedRows[0]?.status !== 'completed' ||
+                !hasAuth('WmsReceiptInbound:Add'),
+              onClick: (ctx) => void openPushLines(String(ctx.selectedRows[0]?.id ?? ''), 'inbound')
+            },
+            {
+              permission: config.value.permissions.Push,
+              key: 'push-asset-payable',
+              label: '下推资产应付',
+              icon: 'ri:bill-line',
+              selectionRequired: true,
+              disabled: (ctx) =>
+                ctx.selectedRows.length !== 1 ||
+                ctx.selectedRows[0]?.status !== 'completed' ||
+                !hasAuth('FinanceAssetPayable:Add'),
+              onClick: (ctx) =>
+                void openPushLines(String(ctx.selectedRows[0]?.id ?? ''), 'asset_payable')
+            }
+          ]
+        : []
   )
 
-  async function openPushOrderLines(id: string, kind: ScmOrderTargetKind) {
-    if (!id) return
-    const revision = ++pushLoadRevision
-    pushOrderId.value = id
-    pushOrderTargetKind.value = kind
-    selectedPushLineIds.value = []
-    pushLineChoices.value = []
-    pushChoicesLoading.value = true
-    await nextTick()
-    await pushLineSelectRef.value?.open()
-    try {
-      const [{ data }, pushedIds] = await Promise.all([
-        fetchScmPurchaseDocument(id),
-        fetchPushedOrderLineIds(id, kind)
-      ])
-      if (revision !== pushLoadRevision) return
-      if (
-        !data ||
-        data.kind !== 'purchase_order' ||
-        !['approved', 'completed'].includes(data.status)
-      ) {
-        ElMessage.warning('请选择已审核的采购订单')
-        pushLineSelectRef.value?.close()
-        return
-      }
-      pushTenantId.value = data.tenantId
-      await loadUnitDisplayNames([data.tenantId])
-      if (revision !== pushLoadRevision) return
-      pushLineChoices.value = data.lines.filter((line) => !pushedIds.has(line.lineId))
-      if (!pushLineChoices.value.length) {
-        ElMessage.warning('所选订单已无可下推到该目标的明细')
-        pushLineSelectRef.value?.close()
-        return
-      }
-      await nextTick()
-      await pushLineSelectRef.value?.reload()
-    } catch {
-      // API 层已提示加载错误。
-    } finally {
-      if (revision === pushLoadRevision) pushChoicesLoading.value = false
-    }
-  }
   async function openPushLines(id: string, kind: ScmReceiptTargetKind) {
     if (!id) return
     const revision = ++pushLoadRevision
@@ -604,29 +638,6 @@
   async function handlePushConfirm(value: string | number | Array<string | number> | undefined) {
     if (pushChoicesLoading.value) return
     const ids = Array.isArray(value) ? value.map(String) : []
-    if (props.kind === 'purchase_order') {
-      if (!ids.length || !pushOrderId.value) {
-        ElMessage.warning('请勾选至少一行订单明细')
-        return
-      }
-      try {
-        const targetId = await pushScmOrderLines(pushOrderId.value, ids, pushOrderTargetKind.value)
-        await tableRef.value?.refreshUpdate()
-        if (
-          targetId &&
-          pushOrderTargetKind.value === 'purchase_inbound' &&
-          hasAuth('WmsPurchaseInbound:View')
-        ) {
-          await router.push({
-            path: '/wms/inbound-business/purchase-inbound',
-            query: { targetId }
-          })
-        }
-      } catch {
-        // API 层已提示下推错误。
-      }
-      return
-    }
     if (!ids.length || !pushReceiptId.value) {
       ElMessage.warning('请勾选至少一行收料明细')
       return
@@ -646,10 +657,10 @@
   }
 
   const columnsFactory = (): ColumnOption<PurchaseListRow>[] => [
-    ...(displayMode.value === 'document' &&
-    (props.kind === 'purchase_request' ||
-      props.kind === 'purchase_order' ||
-      props.kind === 'receipt_notice')
+    ...(props.kind === 'purchase_contract' ||
+    props.kind === 'purchase_request' ||
+    props.kind === 'purchase_order' ||
+    (displayMode.value === 'document' && props.kind === 'receipt_notice')
       ? [{ type: 'selection' as const, width: 48, fixed: 'left' as const }]
       : []),
     {
@@ -731,7 +742,8 @@
           }
         ]
       : []),
-    ...(props.kind === 'purchase_contract' ||
+    ...(props.kind === 'purchase_request' ||
+    props.kind === 'purchase_contract' ||
     props.kind === 'purchase_order' ||
     props.kind === 'receipt_notice'
       ? [
@@ -789,7 +801,7 @@
             label: '数量',
             width: 110,
             align: 'right' as const,
-            formatter: (row: PurchaseListRow) => row.detailLine?.quantity ?? 0
+            formatter: (row: PurchaseListRow) => row.detailLine?.quantity ?? '—'
           },
           {
             prop: 'detailLine.unit',
@@ -827,19 +839,23 @@
             label: '已采购数量',
             width: 120,
             align: 'right' as const,
-            formatter: (row: ScmPurchaseDocument) =>
-              row.lines.reduce((sum, line) => sum + Number(line.purchasedQuantity ?? 0), 0)
+            formatter: (row: PurchaseListRow) =>
+              row.detailLine
+                ? Number(row.detailLine.purchasedQuantity ?? 0)
+                : row.lines.reduce((sum, line) => sum + Number(line.purchasedQuantity ?? 0), 0)
           },
           {
             prop: 'remaining',
             label: '未采购数量',
             width: 120,
             align: 'right' as const,
-            formatter: (row: ScmPurchaseDocument) =>
-              row.lines.reduce(
-                (sum, line) => sum + Number(line.remainingQuantity ?? line.quantity),
-                0
-              )
+            formatter: (row: PurchaseListRow) =>
+              row.detailLine
+                ? Number(row.detailLine.remainingQuantity ?? row.detailLine.quantity)
+                : row.lines.reduce(
+                    (sum, line) => sum + Number(line.remainingQuantity ?? line.quantity),
+                    0
+                  )
           }
         ]
       : []),
@@ -861,10 +877,7 @@
                     : ['expired', 'cancelled'].includes(row.status)
                       ? 'CNCL'
                       : 'DRFT')
-              return (
-                userStore.getDictMap?.scmPurchaseContractStatus?.find((item) => item.value === code)
-                  ?.label ?? code
-              )
+              return userStore.getDictItemByValue('scmPurchaseContractStatus', code)?.label ?? code
             }
           }
         : { dict: { code: 'scmPurchaseStatus', display: 'tag' as const } })
@@ -924,6 +937,13 @@
     const actions: ButtonMoreItem[] = [
       { auth: config.value.permissions.Copy, key: 'copy', label: '复制', icon: 'ri:file-copy-line' }
     ]
+    if (props.kind === 'purchase_request')
+      actions.push({
+        auth: config.value.permissions.Print,
+        key: 'print',
+        label: '打印',
+        icon: 'ri:printer-line'
+      })
     if (row.status === 'draft')
       actions.push({
         auth: config.value.permissions.Delete,
@@ -972,27 +992,175 @@
       effectiveTenantId: effectiveTenantId.value
     })
   }
-  async function pushRequest(id: string) {
-    if (!id || !hasAuth('ScmPurchaseOrder:Add')) return
+  function toSelections(rows: PurchaseListRow[], wholeDocument = false): ScmPurchaseSelection[] {
+    return Object.entries(groupBy(rows, 'id')).map(([documentId, selected]) => ({
+      documentId,
+      lineIds:
+        !wholeDocument && displayMode.value === 'line'
+          ? uniqBy(selected, (row) => row.detailLine?.lineId)
+              .map((row) => row.detailLine?.lineId ?? '')
+              .filter(Boolean)
+          : null
+    }))
+  }
+  function purchaseRows(rows: Array<{ id?: unknown; detailRowId?: unknown }>): PurchaseListRow[] {
+    const currentRows = new Map(visibleRows.value.map((row) => [getDocumentDetailRowKey(row), row]))
+    return rows
+      .map((row) => currentRows.get(String(row.detailRowId ?? row.id)))
+      .filter((row): row is PurchaseListRow => Boolean(row))
+  }
+  async function pushRequests(rows: PurchaseListRow[]): Promise<void> {
+    if (!rows.length || !hasAuth('ScmPurchaseOrder:Add') || !hasAuth(config.value.permissions.Push))
+      return
     await dialogRef.value?.handleOpen({
       kind: 'purchase_order',
-      initialSourceId: id,
-      openLineSelector: true,
+      initialRequests: toSelections(rows),
       tenantOptions: tenantOptions.value,
       effectiveTenantId: effectiveTenantId.value
     })
   }
-  async function pushOrderToReceipt(id: string) {
-    if (!id || !hasAuth('ScmReceiptNotice:Add')) return
+  async function pushOrdersToReceipt(rows: PurchaseListRow[]): Promise<void> {
+    if (!rows.length || !hasAuth('ScmPurchaseOrder:Push') || !hasAuth('ScmReceiptNotice:Add'))
+      return
     await dialogRef.value?.handleOpen({
       kind: 'receipt_notice',
-      initialSourceId: id,
-      openLineSelector: true,
+      initialOrders: toSelections(rows),
       tenantOptions: tenantOptions.value,
       effectiveTenantId: effectiveTenantId.value
     })
   }
+  async function pushOrdersToWms(rows: PurchaseListRow[]): Promise<void> {
+    if (
+      batchBusy.value ||
+      !rows.length ||
+      !hasAuth('ScmPurchaseOrder:Push') ||
+      !hasAuth('WmsPurchaseInbound:Add')
+    )
+      return
+    batchBusy.value = true
+    try {
+      await confirmAction(
+        `将所选 ${rows.length} ${displayMode.value === 'line' ? '条明细' : '份订单'}下推为采购入库草稿？按订单分别生成，已下推明细不会重复生成。`,
+        '下推 WMS 采购入库',
+        { type: 'warning' }
+      )
+      const targets = await pushScmOrders(toSelections(rows))
+      ElMessage.success(`已生成 ${targets.length} 份采购入库草稿`)
+      await tableRef.value?.refreshUpdate()
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close')
+        notifyFriendlyError(error, '批量下推失败，请刷新订单状态后重试')
+    } finally {
+      batchBusy.value = false
+    }
+  }
+  async function inspectReferences(
+    rows: PurchaseListRow[],
+    selections: ScmPurchaseSelection[]
+  ): Promise<boolean> {
+    if (!deleteGuardRef.value) {
+      ElMessage.error('引用校验尚未就绪，请刷新后重试')
+      return true
+    }
+    return deleteGuardRef.value.inspect({
+      resourceLabel: config.value.title,
+      resources: uniqBy(rows, 'id').map((row) => ({ id: row.id, label: row.documentNo })),
+      navigationResource: { type: 'scm_purchase_document', queryKey: 'referencedRecordId' },
+      dependencyMeta: {
+        scm_purchase_document: {
+          label: '关联采购单据',
+          unit: '份',
+          order: 1,
+          actionLabel: '查看关联',
+          description: '处理关联业务后重新检查。',
+          ...createRecordReferenceNavigation(hasAuth).scm_purchase_document
+        }
+      },
+      fetchDependencies: () => fetchScmPurchaseDeleteDependencies(selections)
+    })
+  }
+  async function handleBatchDelete(rows: PurchaseListRow[], wholeDocument = false): Promise<void> {
+    if (batchBusy.value || !rows.length || !hasAuth(config.value.permissions.Delete)) return
+    const selections = toSelections(rows, wholeDocument)
+    batchBusy.value = true
+    try {
+      if (await inspectReferences(rows, selections)) return
+      await confirmAction(
+        `确定删除选中的 ${rows.length} ${displayMode.value === 'line' && !wholeDocument ? '条明细' : '份单据'}吗？此操作不可恢复。`,
+        `删除${config.value.title}`,
+        {
+          type: 'warning',
+          confirmButtonText: '确认删除',
+          cancelButtonText: '取消',
+          confirmButtonType: 'danger'
+        }
+      )
+      try {
+        if (
+          wholeDocument &&
+          rows.length === 1 &&
+          !['purchase_request', 'purchase_contract'].includes(rows[0].kind)
+        )
+          await deleteScmPurchaseDocument(rows[0].id)
+        else await batchScmPurchaseDocuments('delete', selections)
+        ElMessage.success('所选记录已删除')
+        await tableRef.value?.refreshRemove()
+      } catch (error) {
+        if (!(await inspectReferences(rows, selections)))
+          notifyFriendlyError(error, '删除失败，请刷新单据状态后重试')
+      }
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close')
+        notifyFriendlyError(error, '引用检查失败，请重试')
+    } finally {
+      batchBusy.value = false
+    }
+  }
+  async function runBatch(action: 'copy' | 'submit', rows: PurchaseListRow[]): Promise<void> {
+    if (
+      batchBusy.value ||
+      !rows.length ||
+      !hasAuth(config.value.permissions[action === 'copy' ? 'Copy' : 'Submit'])
+    )
+      return
+    batchBusy.value = true
+    try {
+      await confirmAction(
+        action === 'submit'
+          ? `提交选中记录所属的 ${uniqBy(rows, 'id').length} 份${config.value.title}？提交后不可编辑。`
+          : `复制选中的 ${rows.length} ${displayMode.value === 'line' ? '条明细' : '份单据'}，生成新的${config.value.title}草稿？`,
+        action === 'submit' ? `提交${config.value.title}` : '批量复制',
+        { type: 'warning' }
+      )
+      await batchScmPurchaseDocuments(action, toSelections(rows))
+      ElMessage.success(
+        action === 'submit' ? `${config.value.title}已提交` : `${config.value.title}草稿已复制`
+      )
+      await tableRef.value?.refreshCreate()
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close')
+        notifyFriendlyError(error, '批量操作失败，请刷新后重试')
+    } finally {
+      batchBusy.value = false
+    }
+  }
+  async function printRequests(rows: PurchaseListRow[]): Promise<void> {
+    if (!hasAuth('ScmPurchaseRequest:Print')) return
+    try {
+      const documents = await Promise.all(
+        uniqBy(rows, 'id').map(async (row) => {
+          const { data } = await fetchScmPurchaseDocument(row.id)
+          if (!data) throw new Error('采购申请加载失败，请重试')
+          return data
+        })
+      )
+      await printSheetRef.value?.print(documents)
+    } catch (error) {
+      notifyFriendlyError(error, '打印数据加载失败，请重试')
+    }
+  }
   async function handleMoreAction(row: ScmPurchaseDocument, key: string) {
+    if (key === 'print') return printRequests([row])
     if (key === 'copy') return openDialog(row, true)
     if (key === 'delete') return handleDelete(row)
     if (key === 'batch' || key === 'serial') {
@@ -1004,22 +1172,7 @@
     if (transition) await handleTransition(row, transition)
   }
   async function handleDelete(row: ScmPurchaseDocument) {
-    try {
-      await confirmAction(
-        `确定删除“${row.documentNo}”吗？已被下游引用的单据无法删除。`,
-        `删除${config.value.title}`,
-        {
-          type: 'warning',
-          confirmButtonText: '确认删除',
-          cancelButtonText: '取消',
-          confirmButtonType: 'danger'
-        }
-      )
-      await deleteScmPurchaseDocument(row.id)
-      await tableRef.value?.refreshRemove()
-    } catch {
-      /* 用户取消或 API 已提示。 */
-    }
+    await handleBatchDelete([row], true)
   }
   async function handleTransition(row: ScmPurchaseDocument, transition: PurchaseTransition) {
     try {
@@ -1074,8 +1227,9 @@
     const { readDocuments, assertContext } = createDocumentReader()
     const pageQuery = { ...query, ...buildSupabasePageRange(query) }
     if (displayMode.value === 'document') {
-      visibleRows.value = []
-      return readDocuments(pageQuery)
+      const result = await readDocuments(pageQuery)
+      visibleRows.value = result.data ?? []
+      return result
     }
     const documents = await loadAllDocumentPages(readDocuments, pageQuery)
     await loadUnitDisplayNames(documents.map((document) => document.tenantId))
@@ -1161,12 +1315,13 @@
     for (const [index, row] of rows.entries()) {
       const at = `第 ${index + 2} 行`
       const key = String(row.receiptKey ?? '').trim()
-      const project = projectByCode.get(String(row.projectCode ?? '').trim())
+      const projectCode = String(row.projectCode ?? '').trim()
+      const project = projectByCode.get(projectCode)
       const supplier = supplierByCode.get(String(row.supplierCode ?? '').trim())
       const material = materialByCode.get(String(row.materialCode ?? '').trim())
       const documentDate = String(row.documentDate ?? '').trim()
       const quantity = Number(row.quantity)
-      if (!key || !project || !supplier || !material)
+      if (!key || (projectCode && !project) || !supplier || !material)
         throw new Error(`${at}分组、项目、供应商或物料编码无效`)
       if (!/^\d{4}-\d{2}-\d{2}$/.test(documentDate) || !dayjs(documentDate).isValid())
         throw new Error(`${at}收料日期无效`)
@@ -1182,11 +1337,11 @@
         throw new Error(`${at}请填写有效的采购订单行号`)
       let source: Awaited<ReturnType<typeof fetchScmReceiptOrderLineChoices>>[number] | undefined
       if (orderNo) {
-        const sourceKey = `${supplier.id}:${project.id}`
+        const sourceKey = `${supplier.id}:${project?.id ?? ''}`
         if (!sourceChoices.has(sourceKey))
           sourceChoices.set(
             sourceKey,
-            await fetchScmReceiptOrderLineChoices(tenantId, supplier.id, project.id)
+            await fetchScmReceiptOrderLineChoices(tenantId, supplier.id, project?.id)
           )
         source = sourceChoices
           .get(sourceKey)
@@ -1194,11 +1349,13 @@
             (item) =>
               item.sourceDocumentNo === orderNo &&
               item.sourceLineNo === sourceLineNo &&
-              item.materialId === material.id
+              item.materialId === material.id &&
+              (item.projectId || '') === (project?.id || '')
           )
         if (!source) throw new Error(`${at}采购订单明细不存在或已经交完`)
         const allocated = used.get(source.choiceId) ?? 0
-        if (allocated + quantity > source.quantity) throw new Error(`${at}数量超过采购订单未交数量`)
+        if (allocated + quantity > Number(source.quantity))
+          throw new Error(`${at}数量超过采购订单未交数量`)
         used.set(source.choiceId, allocated + quantity)
       }
       const warehouseCode = String(row.warehouseCode ?? '').trim()
@@ -1249,14 +1406,14 @@
       if (material.auxiliaryUnit2Id && !auxiliaryFactor2)
         throw new Error(`${at}物料缺少辅助单位2换算关系`)
       const group = groups.get(key) ?? {
-        projectId: project.id,
+        projectId: project?.id ?? '',
         supplierId: supplier.id,
         documentDate,
         lines: [],
         remark: String(row.remark ?? '').trim()
       }
       if (
-        group.projectId !== project.id ||
+        group.projectId !== (project?.id ?? '') ||
         group.supplierId !== supplier.id ||
         group.documentDate !== documentDate
       )
@@ -1361,7 +1518,7 @@
       const supplierCode = String(row.suggestedSupplierCode ?? '').trim()
       const project = projectByCode.get(projectCode)
       const material = materialByCode.get(materialCode)
-      if (!requestKey || !project || !material)
+      if (!requestKey || (projectCode && !project) || !material)
         throw new Error(`第 ${sourceRow} 行的分组号、项目编码或物料编码无效`)
       if (!/^\d{4}-\d{2}-\d{2}$/.test(documentDate) || !dayjs(documentDate).isValid())
         throw new Error(`第 ${sourceRow} 行申请日期无效`)
@@ -1406,13 +1563,13 @@
       groups.set(requestKey, group)
     })
     for (const [requestKey, group] of groups) {
-      const project = projectByCode.get(group.projectCode)!
+      const project = projectByCode.get(group.projectCode)
       await createScmPurchaseDocument({
         tenantId,
         kind: 'purchase_request',
         documentNo: '',
         documentTypeId: null,
-        projectId: project.id,
+        projectId: project?.id ?? null,
         supplierId: null,
         sourceId: null,
         documentDate: group.documentDate,
