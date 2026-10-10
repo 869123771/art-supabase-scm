@@ -265,7 +265,6 @@
   }
   async function onDisplayModeChange(): Promise<void> {
     tableRef.value?.clearSelection()
-    tableRef.value?.resetColumns()
     await tableRef.value?.refreshContext()
   }
   const importTenantId = computed(

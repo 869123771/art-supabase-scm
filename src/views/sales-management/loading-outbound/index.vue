@@ -144,7 +144,6 @@
   const displayMode = ref<'document' | 'line'>('document')
 
   function refreshDisplayMode(): void {
-    tableRef.value?.resetColumns()
     void tableRef.value?.refreshContext()
   }
   const visibleRows = ref<LoadingListRow[]>([])

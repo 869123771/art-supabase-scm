@@ -1,4 +1,4 @@
-import { useSupabase } from '@/hooks'
+import { useSupabase } from '@/hooks/core/useSupabase'
 import { isPlainObjectRecord } from '@/utils/type-guards'
 import { normalizeNullableText } from '@/utils/form/normalize'
 import { buildSupabasePageRange } from '@/utils/supabase/pagination'

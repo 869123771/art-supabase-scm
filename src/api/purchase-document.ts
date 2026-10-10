@@ -1,4 +1,4 @@
-import { useSupabase } from '@/hooks'
+import { useSupabase } from '@/hooks/core/useSupabase'
 import { omit, uniq } from 'lodash-es'
 import { normalizeNonNullableText, normalizeNullableText } from '@/utils/form/normalize'
 import { fetchAllRangePages } from '@/utils/supabase'
@@ -650,7 +650,7 @@ function payload(input: ScmPurchaseWrite) {
     documentDate: input.documentDate,
     deliveryDate: input.deliveryDate,
     details: input.details,
-    lines: input.lines.map(toScmPurchaseLinePayload),
+    lines: input.lines.map((line) => toScmPurchaseLinePayload(line, input.kind)),
     paymentPlans: input.paymentPlans,
     deliveryPlans: input.deliveryPlans.map((plan) =>
       omit(plan, ['remainingQuantity', 'recentDeliveryDate'])

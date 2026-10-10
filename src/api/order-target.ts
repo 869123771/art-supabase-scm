@@ -1,4 +1,4 @@
-import { useSupabase } from '@/hooks'
+import { useSupabase } from '@/hooks/core/useSupabase'
 import type { ScmPurchaseSelection } from './purchase-document'
 
 export type ScmOrderTargetKind = 'purchase_inbound'

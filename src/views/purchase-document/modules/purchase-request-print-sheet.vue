@@ -42,30 +42,21 @@
   </Teleport>
 </template>
 <script setup lang="ts">
+  import { usePrintSheet } from '@/hooks/core/usePrintSheet'
   import type { ScmPurchaseDocument } from '@scm/api'
   import { formatDateTimeValue, formatNumberValue } from '@/utils/ui/format'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   defineOptions({ name: 'ScmPurchaseRequestPrintSheet' })
   const records = ref<ScmPurchaseDocument[]>([])
   const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
+  const { print: printSheet } = usePrintSheet('is-purchase-request-printing', () => {
+    records.value = []
+  })
   async function print(rows: ScmPurchaseDocument[]): Promise<void> {
     await loadUnitDisplayNames(rows.map((row) => row.tenantId))
     records.value = rows
-    await nextTick()
-    document.body.classList.add('is-purchase-request-printing')
-    const cleanup = () => {
-      document.body.classList.remove('is-purchase-request-printing')
-      records.value = []
-    }
-    window.addEventListener('afterprint', cleanup, { once: true })
-    try {
-      window.print()
-    } catch (error) {
-      cleanup()
-      throw error
-    }
+    await printSheet()
   }
-  onBeforeUnmount(() => document.body.classList.remove('is-purchase-request-printing'))
   defineExpose({ print })
 </script>
 <style lang="scss">

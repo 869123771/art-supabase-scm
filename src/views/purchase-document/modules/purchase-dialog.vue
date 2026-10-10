@@ -2684,6 +2684,7 @@
     line.baseUnit = material.baseUnitName || material.unit || ''
     line.stockUnit = material.stockUnit || line.baseUnit
     line.baseQuantity = baseQuantity
+    if (line.sourceLineId && !line.purchaseContractLineId) line.sourceQuantity = baseQuantity
     const stockFactor = conversionFactor(material, material.inventoryUnitId)
     line.stockQuantity = stockFactor ? Math.round((baseQuantity / stockFactor) * 1000) / 1000 : 0
     line.auxiliaryUnit = material.auxiliaryUnit || ''

@@ -1,0 +1,1 @@
+import{B as e,K as t,X as n,tt as r,z as i}from"./_baseUniq-sVMadTMo.js";function a(r,i){return t(e(r,i,n),r+``)}function o(e){return r(e)&&i(e)}export{a as n,o as t};
