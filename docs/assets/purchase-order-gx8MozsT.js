@@ -1,0 +1,1 @@
+import{da as e,qi as t,zi as n}from"./sys-zBh7-9dH.js";import{t as r}from"./purchase-workspace-Q-Rc8YRU.js";var i=t({name:`ScmPurchaseOrder`,__name:`index`,setup(t){return(t,i)=>(e(),n(r,{kind:`purchase_order`}))}});export{i as default};

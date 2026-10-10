@@ -62,6 +62,9 @@ export interface ScmPurchaseLine {
   serialNumbers?: string[]
   purchasedQuantity?: number
   receivedQuantity?: number
+  deliveredQuantity?: number
+  returnedQuantity?: number
+  unreceivedQuantity?: number
   remainingQuantity?: number
 }
 

@@ -5,6 +5,9 @@ export function toScmPurchaseLinePayload(line: ScmPurchaseLine, kind: ScmPurchas
   const { auxiliaryQuantity2, auxiliaryUnit2, ...values } = omit(line, [
     'purchasedQuantity',
     'receivedQuantity',
+    'deliveredQuantity',
+    'returnedQuantity',
+    'unreceivedQuantity',
     'remainingQuantity'
   ])
   return {

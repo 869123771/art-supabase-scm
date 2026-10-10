@@ -704,6 +704,14 @@
 </template>
 
 <script setup lang="tsx">
+  import {
+    lineTotal as purchaselineTotal,
+    lineSubtotal as purchaselineSubtotal,
+    lineDiscountAmount as purchaselineDiscountAmount,
+    lineTaxAmount as purchaselineTaxAmount,
+    lineTaxedUnitPrice as purchaselineTaxedUnitPrice
+  } from '../purchase-line-amounts'
+
   import { findPurchaseContractPrice } from '@scm/api/purchase-contract-pricing'
   import ArtButtonMore from '@/components/core/forms/art-button-more/index.vue'
   import { buildSupabasePageRange } from '@/utils/supabase/pagination'
@@ -1170,72 +1178,13 @@
     lines.value.reduce((sum, line) => sum + Number(line.quantity || 0), 0)
   )
   const totalAmount = computed(() => lines.value.reduce((sum, line) => sum + lineTotal(line), 0))
-  function lineTotal(line: ScmPurchaseLine) {
-    return lineSubtotal(line) + lineTaxAmount(line)
-  }
-  function lineSubtotal(line: ScmPurchaseLine) {
-    if (line.gift) return 0
-    if (kind.value === 'purchase_order')
-      return (
-        Math.round(
-          (Number(line.quantity || 0) * Number(line.unitPrice || 0) - lineDiscountAmount(line)) *
-            100
-        ) / 100
-      )
-    return (
-      Math.round(
-        Number(line.quantity || 0) *
-          Number(line.unitPrice || 0) *
-          (1 - Number(line.discountRate || 0) / 100) *
-          100
-      ) / 100
-    )
-  }
-  function lineDiscountAmount(line: ScmPurchaseLine) {
-    if (line.gift) return 0
-    if (kind.value === 'purchase_order')
-      return (
-        Math.round(
-          Number(line.quantity || 0) * lineTaxedUnitPrice(line) * Number(line.discountRate || 0)
-        ) / 100
-      )
-    return (
-      Math.round(
-        Number(line.quantity || 0) * Number(line.unitPrice || 0) * Number(line.discountRate || 0)
-      ) / 100
-    )
-  }
-  function lineTaxAmount(line: ScmPurchaseLine) {
-    if (line.gift) return 0
-    if (kind.value === 'purchase_order')
-      return (
-        Math.round(
-          Number(line.quantity || 0) * Number(line.unitPrice || 0) * Number(line.taxRate || 0)
-        ) / 100
-      )
-    return (
-      Math.round(
-        Number(line.quantity || 0) *
-          Number(line.unitPrice || 0) *
-          (1 - Number(line.discountRate || 0) / 100) *
-          Number(line.taxRate || 0)
-      ) / 100
-    )
-  }
-  function lineTaxedUnitPrice(line: ScmPurchaseLine) {
-    if (line.gift) return 0
-    if (kind.value === 'purchase_order')
-      return Number(
-        line.taxInclusiveUnitPrice ??
-          Math.round(Number(line.unitPrice || 0) * (1 + Number(line.taxRate || 0) / 100) * 10000) /
-            10000
-      )
-    return (
-      Number(line.unitPrice || 0) *
-      (1 - Number(line.discountRate || 0) / 100) *
-      (1 + Number(line.taxRate || 0) / 100)
-    )
-  }
+  const lineTotal = (line: ScmPurchaseLine): number => purchaselineTotal(line, kind.value)
+  const lineSubtotal = (line: ScmPurchaseLine): number => purchaselineSubtotal(line, kind.value)
+  const lineDiscountAmount = (line: ScmPurchaseLine): number =>
+    purchaselineDiscountAmount(line, kind.value)
+  const lineTaxAmount = (line: ScmPurchaseLine): number => purchaselineTaxAmount(line, kind.value)
+  const lineTaxedUnitPrice = (line: ScmPurchaseLine): number =>
+    purchaselineTaxedUnitPrice(line, kind.value)
   function updateTaxInclusiveUnitPrice(line: ScmPurchaseLine): void {
     line.taxInclusiveUnitPrice =
       Math.round(Number(line.unitPrice || 0) * (1 + Number(line.taxRate || 0) / 100) * 10000) /

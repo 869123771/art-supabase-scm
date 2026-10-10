@@ -431,6 +431,8 @@ export async function fetchScmPurchaseDocuments(
       supplier: withSuppliers[index].supplier
     }))
     if (kind === 'purchase_request') result.data = await attachRequestQuantities(result.data)
+    if (kind === 'purchase_order' || kind === 'receipt_notice')
+      result.data = await attachInboundQuantities(result.data)
   }
   return result
 }
@@ -570,6 +572,46 @@ export async function fetchScmReceiptOrderLineChoices(
         : []
     })
   )
+}
+
+async function attachInboundQuantities(rows: ScmPurchaseDocument[]) {
+  const { data } = await responseHandle<
+    Array<{
+      documentId: string
+      lineId: string
+      deliveredQuantity: number
+      receivedQuantity: number
+      returnedQuantity: number
+    }>
+  >(
+    () =>
+      supabase.rpc('scm_purchase_line_progress_secure', {
+        p_document_ids: rows.map((row) => row.id)
+      }),
+    { breakReturn: true, showErrorMessage: true, errorMessage: '入库与退货数量加载失败，请重试' }
+  )
+  const quantities = new Map(
+    (data ?? []).map((line) => [`${line.documentId}:${line.lineId}`, line])
+  )
+  return rows.map((row) => ({
+    ...row,
+    lines: row.lines.map((line) => {
+      const progress = quantities.get(`${row.id}:${line.lineId}`)
+      if (!progress) throw new Error('入库进度不完整，请刷新后重试')
+      const receivedQuantity = Number(progress.receivedQuantity)
+      const returnedQuantity = Number(progress.returnedQuantity)
+      return {
+        ...line,
+        deliveredQuantity: Number(progress.deliveredQuantity),
+        receivedQuantity,
+        returnedQuantity,
+        unreceivedQuantity:
+          Number(line.quantity) -
+          receivedQuantity -
+          (row.kind === 'purchase_order' ? returnedQuantity : 0)
+      }
+    })
+  }))
 }
 
 async function attachOrderProgress(row: ScmPurchaseDocument) {
@@ -734,7 +776,7 @@ export interface ScmPurchaseSelection {
 }
 
 export async function batchScmPurchaseDocuments(
-  action: 'delete' | 'copy' | 'submit' | 'buyer',
+  action: 'delete' | 'copy' | 'submit' | 'buyer' | 'withdraw',
   selections: ScmPurchaseSelection[],
   buyerId?: string
 ) {

@@ -137,7 +137,8 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
       Withdraw: 'ScmPurchaseOrder:Withdraw',
       Approve: 'ScmPurchaseOrder:Approve',
       Complete: 'ScmPurchaseOrder:Complete',
-      RecentPrice: 'ScmPurchaseOrder:RecentPrice'
+      RecentPrice: 'ScmPurchaseOrder:RecentPrice',
+      Print: 'ScmPurchaseOrder:Print'
     }
   },
   receipt_notice: {
@@ -160,10 +161,8 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
     tabs: [],
     transitions: {
       draft: [{ status: 'submitted', action: 'Submit', label: '提交通知' }],
-      submitted: [
-        { status: 'draft', action: 'Withdraw', label: '撤回' },
-        { status: 'completed', action: 'Complete', label: '确认收料' }
-      ]
+      submitted: [{ status: 'draft', action: 'Withdraw', label: '撤回' }],
+      completed: [{ status: 'draft', action: 'Withdraw', label: '撤回' }]
     },
     permissions: {
       View: 'ScmReceiptNotice:View',
@@ -174,7 +173,6 @@ export const purchaseConfigs: Record<ScmPurchaseKind, PurchaseConfig> = {
       Export: 'ScmReceiptNotice:Export',
       Submit: 'ScmReceiptNotice:Submit',
       Withdraw: 'ScmReceiptNotice:Withdraw',
-      Complete: 'ScmReceiptNotice:Complete',
       GenerateBatch: 'ScmReceiptNotice:GenerateBatch',
       GenerateSerial: 'ScmReceiptNotice:GenerateSerial',
       Import: 'ScmReceiptNotice:Import',
