@@ -1,1 +1,0 @@
-import{Ki as e,Ri as t,ua as n}from"./sys-B11i97eo.js";import{t as r}from"./purchase-workspace-D6qihJr0.js";var i=e({name:`ScmReceiptNotice`,__name:`index`,setup(e){return(e,i)=>(n(),t(r,{kind:`receipt_notice`}))}});export{i as default};

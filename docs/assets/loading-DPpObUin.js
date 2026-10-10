@@ -1,1 +1,0 @@
-import{Ki as e,Ri as t,ua as n}from"./sys-B11i97eo.js";import{t as r}from"./scm-document-workspace-ClE70bVi.js";var i=e({name:`ScmLoading`,__name:`index`,setup(e){return(e,i)=>(n(),t(r,{kind:`loading`}))}});export{i as default};
