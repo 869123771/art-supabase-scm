@@ -66,8 +66,8 @@
         empty-text="暂无可发明细"
         empty-description="当前订单已无可下推的发货数量。"
         @confirm="confirmShippingLines"
+        :show-trigger="false"
       >
-        <template #trigger><span class="hidden" /></template>
       </ArtTableMultipleSelect>
       <ScmDocumentDetailDrawer ref="detailDrawerRef" />
       <QuotationConversionDialog ref="conversionDialogRef" @success="handleConverted" />

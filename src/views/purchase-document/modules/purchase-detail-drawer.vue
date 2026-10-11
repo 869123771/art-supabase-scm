@@ -320,18 +320,18 @@
     config.value.fields.map((field) => ({
       key: field.key,
       label: field.label,
+      dictCode:
+        field.key === 'ownerType'
+          ? 'mdmBusinessOwnerType'
+          : field.key === 'contractStatus'
+            ? 'scmPurchaseContractStatus'
+            : field.key === 'effectiveness'
+              ? 'scmContractEffectiveness'
+              : undefined,
       value: (row: ScmPurchaseDocument) => {
         const value = row.details[field.key]
-        if (field.key === 'contractStatus')
-          return (
-            userStore.getDictItemByValue('scmPurchaseContractStatus', value)?.label ||
-            String(value || '--')
-          )
-        if (field.key === 'effectiveness')
-          return (
-            userStore.getDictItemByValue('scmContractEffectiveness', value)?.label ||
-            String(value || '--')
-          )
+        if (['ownerType', 'contractStatus', 'effectiveness'].includes(field.key))
+          return String(value ?? '--')
         return String(row.details[`${field.key}Name` as keyof typeof row.details] ?? value ?? '--')
       },
       span: field.span === 24 ? 2 : 1

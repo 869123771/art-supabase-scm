@@ -301,7 +301,7 @@
                 row-key="id"
                 border
                 :max-height="380"
-                scrollbar-always-on
+                :scrollbar-always-on="false"
                 class="w-full!"
                 empty-text="暂无收款计划"
                 empty-description="点击“添加计划”设置每期应收。"
@@ -392,7 +392,7 @@
               row-key="id"
               border
               :max-height="380"
-              scrollbar-always-on
+              :scrollbar-always-on="false"
               class="w-full!"
               empty-text="暂无发货计划"
               empty-description="点击“添加计划”安排要货日期与发货数量。"
@@ -568,7 +568,7 @@
         :pagination="false"
         :loading="shippingOrderLoading"
         :height="Math.min(420, 88 + availableShippingLines.length * 48)"
-        scrollbar-always-on
+        :scrollbar-always-on="false"
         row-key="lineId"
         border
         empty-text="暂无可选的订单明细"
@@ -581,6 +581,7 @@
     </div>
   </ArtDialog>
   <ArtTableMultipleSelect
+    :show-trigger="false"
     ref="loadingPickerRef"
     :api-fn="loadingPickerApi"
     :columns="loadingChoiceColumns"
@@ -596,7 +597,6 @@
     reset-draft-on-open
     @confirm="confirmLoadingChoices"
   >
-    <template #trigger><span class="hidden" /></template>
   </ArtTableMultipleSelect>
 </template>
 

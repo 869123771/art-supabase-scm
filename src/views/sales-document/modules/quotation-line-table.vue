@@ -63,7 +63,7 @@
       show-summary
       :summary-method="summaryMethod"
       :max-height="450"
-      scrollbar-always-on
+      :scrollbar-always-on="false"
       class="scm-quotation-summary-table w-full"
       :empty-text="
         loading
@@ -83,6 +83,7 @@
       "
     />
     <ArtTableMultipleSelect
+      :show-trigger="false"
       ref="pickerRef"
       v-model="selectedMaterialIds"
       :api-fn="materialPickerApi"
@@ -102,7 +103,6 @@
       reset-draft-on-open
       @confirm="confirmMaterials"
     >
-      <template #trigger><span class="hidden" /></template>
     </ArtTableMultipleSelect>
     <ArtDialog ref="quotationPickerRef" size="xl">
       <div class="flex min-w-0 flex-col gap-3">

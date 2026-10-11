@@ -293,7 +293,7 @@
               show-summary
               :summary-method="lineSummaryMethod"
               :max-height="460"
-              scrollbar-always-on
+              :scrollbar-always-on="false"
               class="scm-editable-table"
               empty-text="暂无物料明细"
               empty-description="选择来源单据或参选物料后开始填写。"
@@ -343,7 +343,7 @@
                 table-layout="fixed"
                 border
                 :max-height="380"
-                scrollbar-always-on
+                :scrollbar-always-on="false"
                 empty-text="暂无付款计划"
                 empty-description="点击“添加计划”设置每期应付。"
               />
@@ -426,7 +426,7 @@
               table-layout="fixed"
               border
               :max-height="380"
-              scrollbar-always-on
+              :scrollbar-always-on="false"
               empty-text="暂无交货计划"
               empty-description="点击“添加计划”，再参选订单物料明细。"
             />
@@ -521,7 +521,7 @@
               table-layout="fixed"
               border
               :max-height="420"
-              scrollbar-always-on
+              :scrollbar-always-on="false"
               empty-text="暂无合同条款"
               empty-description="点击“添加条款”选择字典条款并填写内容。"
             />

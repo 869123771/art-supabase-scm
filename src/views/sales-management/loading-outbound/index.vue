@@ -70,7 +70,7 @@
               :max-height="430"
               row-key="id"
               border
-              scrollbar-always-on
+              :scrollbar-always-on="false"
               empty-text="暂无可用库存"
               empty-description="请检查项目库存、库位预留及物料批次。"
               @selection-change="onStockSelection"
