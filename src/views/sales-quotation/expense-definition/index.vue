@@ -223,7 +223,7 @@
       prop: 'enabled',
       label: '状态',
       width: 105,
-      dict: { code: 'commonBoolean', display: 'tag', value: (row) => String(row.enabled) }
+      dict: { code: 'commonBoolean', display: 'tag', value: (row) => String(row.enabled ?? '') }
     },
     { prop: 'sortOrder', label: '排序', width: 82, align: 'center' },
     {
