@@ -1,0 +1,1 @@
+import{Vi as e,Yi as t,pa as n}from"./sys-DTXR_TwP.js";import{t as r}from"./purchase-workspace-COYjtBCj.js";var i=t({name:`ScmPurchaseOrder`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`purchase_order`}))}});export{i as default};

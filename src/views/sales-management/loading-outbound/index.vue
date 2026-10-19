@@ -32,16 +32,6 @@
         }"
         focusable
       >
-        <template #search-displayMode>
-          <ElRadioGroup
-            v-model="displayMode"
-            aria-label="单据列表展示方式"
-            @change="refreshDisplayMode"
-          >
-            <ElRadioButton label="document" value="document">按单据</ElRadioButton>
-            <ElRadioButton label="line" value="line">按明细</ElRadioButton>
-          </ElRadioGroup>
-        </template>
       </ArtTableQuery>
 
       <ArtDialog
@@ -90,6 +80,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import { computed, reactive, ref, watch } from 'vue'
   import { round } from 'lodash-es'
@@ -141,7 +132,6 @@
   const { effectiveTenantId } = storeToRefs(tenantScopeStore)
   const tableRef = ref<ArtTableQueryExpose>()
   type LoadingListRow = ScmLoadingOutboundRow & { detailCount?: number }
-  const displayMode = ref<'document' | 'line'>('document')
 
   function refreshDisplayMode(): void {
     void tableRef.value?.refreshContext()
@@ -204,26 +194,37 @@
       : ([1, 1] as [number, number])
   }
   const query = ref({
+    displayMode: 'document' as 'document' | 'line',
     status: 'pending' as 'pending' | 'partial' | 'complete' | 'all',
     loadingNo: '',
     materialDescription: '',
     projectName: '',
     customerName: ''
   })
+  const displayMode = computed({
+    get: () => query.value.displayMode,
+    set: (value: 'document' | 'line') => {
+      query.value.displayMode = value
+    }
+  })
+  watch(displayMode, () => refreshDisplayMode())
+  const displayModeOptions = useDictionaryOptions('commonDocumentDisplayMode')
+  const outboundStatusOptions = useDictionaryOptions('scmLoadingOutboundStatus')
   const targetLoadingId = computed(() => String(route.query.loadingId ?? ''))
   const searchItems: SearchFormItem[] = [
-    { label: '展示方式', key: 'displayMode', type: 'text' },
+    {
+      label: '展示方式',
+      key: 'displayMode',
+      type: 'radioGroup',
+      options: displayModeOptions,
+      props: { optionType: 'button', 'aria-label': '单据列表展示方式' }
+    },
     {
       label: '出库状态',
       key: 'status',
       type: 'select',
       props: {
-        options: [
-          { label: '未出库', value: 'pending' },
-          { label: '部分出库', value: 'partial' },
-          { label: '已全出库', value: 'complete' },
-          { label: '全部状态', value: 'all' }
-        ]
+        options: outboundStatusOptions
       }
     },
     { label: '装车单号', key: 'loadingNo', type: 'input', props: { clearable: true } },

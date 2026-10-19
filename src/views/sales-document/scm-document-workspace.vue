@@ -36,16 +36,6 @@
         }"
         focusable
       >
-        <template #search-displayMode>
-          <ElRadioGroup
-            v-model="displayMode"
-            aria-label="单据列表展示方式"
-            @change="onDisplayModeChange"
-          >
-            <ElRadioButton label="document" value="document">按单据</ElRadioButton>
-            <ElRadioButton label="line" value="line">按明细</ElRadioButton>
-          </ElRadioGroup>
-        </template>
       </ArtTableQuery>
 
       <ScmDocumentDialog ref="dialogRef" @success="handleSaved" />
@@ -80,6 +70,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import { ElMessage, ElTag } from 'element-plus'
   import { startWorkflow, withdrawWorkflow } from '@/api/workflow'
   import { storeToRefs } from 'pinia'
@@ -163,7 +154,6 @@
   const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
 
   const props = defineProps<{ kind: ScmDocumentKind }>()
-  const displayMode = ref<'document' | 'line'>('document')
   const visibleRows = ref<SalesListRow[]>([])
   const lineProperties = new Set([
     'detailLine.lineNo',
@@ -244,7 +234,18 @@
   const materialDialogRef = ref<InstanceType<typeof QuotationMaterialDialog>>()
   const workOrderDialogRef = ref<InstanceType<typeof QuotationWorkOrderDialog>>()
   const bomDialogRef = ref<InstanceType<typeof QuotationBomDialog>>()
-  const search = ref<ScmSalesDocumentQuery>({ keyword: '' })
+  const search = ref<ScmSalesDocumentQuery & { displayMode: 'document' | 'line' }>({
+    keyword: '',
+    displayMode: 'document'
+  })
+  const displayMode = computed({
+    get: () => search.value.displayMode,
+    set: (value: 'document' | 'line') => {
+      search.value.displayMode = value
+    }
+  })
+  watch(displayMode, () => void onDisplayModeChange())
+  const displayModeOptions = useDictionaryOptions('commonDocumentDisplayMode')
   type SalesListRow = ScmSalesDocument & {
     detailRowId?: string
     detailLine?: ScmDocumentLine
@@ -309,7 +310,13 @@
   )
 
   const searchItems = computed<SearchFormItem[]>(() => [
-    { label: '展示方式', key: 'displayMode', type: 'text' },
+    {
+      label: '展示方式',
+      key: 'displayMode',
+      type: 'radioGroup',
+      options: displayModeOptions,
+      props: { optionType: 'button', 'aria-label': '单据列表展示方式' }
+    },
     ...(isPlatformSuper.value && !effectiveTenantId.value
       ? [
           {

@@ -351,8 +351,12 @@
             <div v-else class="mb-4 flex items-center gap-3 text-sm"
               ><span>计划方式</span
               ><ElRadioGroup v-model="details.paymentMode">
-                <ElRadioButton label="ratio" value="ratio">按比例</ElRadioButton
-                ><ElRadioButton label="amount" value="amount">按金额</ElRadioButton>
+                <ElRadioButton
+                  v-for="option in paymentModeOptions"
+                  :key="option.value"
+                  :value="option.value"
+                  >{{ option.label }}</ElRadioButton
+                >
               </ElRadioGroup></div
             >
             <template v-if="kind !== 'purchase_contract' && kind !== 'purchase_order'">
@@ -845,6 +849,12 @@
   const lineTableRef = ref<ArtTableExpose>()
   const kind = ref<ScmPurchaseKind>('purchase_contract')
   const taxRateOptions = useDictionaryOptions('scmTaxRate', Number)
+  const configuredPaymentModeOptions = useDictionaryOptions('scmPurchaseAllocationMode')
+  const paymentModeOptions = computed(() =>
+    configuredPaymentModeOptions.filter(
+      (option) => option.value === 'ratio' || option.value === 'amount'
+    )
+  )
   const config = computed(() => purchaseConfigs[kind.value])
   const quantityOptional = computed(
     () =>

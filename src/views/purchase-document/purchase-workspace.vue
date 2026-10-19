@@ -44,16 +44,6 @@
         }"
         focusable
       >
-        <template #search-displayMode>
-          <ElRadioGroup
-            v-model="displayMode"
-            aria-label="单据列表展示方式"
-            @change="onDisplayModeChange"
-          >
-            <ElRadioButton label="document" value="document">按单据</ElRadioButton>
-            <ElRadioButton label="line" value="line">按明细</ElRadioButton>
-          </ElRadioGroup>
-        </template>
       </ArtTableQuery>
       <PurchaseDialog ref="dialogRef" @success="handleSaved" />
       <PurchaseDetailDrawer ref="drawerRef" />
@@ -72,6 +62,7 @@
 </template>
 
 <script setup lang="tsx">
+  import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
   import { storeToRefs } from 'pinia'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import dayjs from 'dayjs'
@@ -142,7 +133,6 @@
   defineOptions({ name: 'ScmPurchaseWorkspace' })
   const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
   const props = defineProps<{ kind: ScmPurchaseKind }>()
-  const displayMode = ref<'document' | 'line'>('document')
   const visibleRows = ref<PurchaseListRow[]>([])
   const lineProperties = new Set([
     'detailLine.lineNo',
@@ -228,7 +218,18 @@
   }>()
   const drawerRef = ref<{ handleOpen: (record: ScmPurchaseDocument) => Promise<void> }>()
   const inboundDrawerRef = ref<InstanceType<typeof WmsPurchaseDocumentDrawer>>()
-  const search = ref<ScmPurchaseQuery>({ keyword: '' })
+  const search = ref<ScmPurchaseQuery & { displayMode: 'document' | 'line' }>({
+    keyword: '',
+    displayMode: 'document'
+  })
+  const displayMode = computed({
+    get: () => search.value.displayMode,
+    set: (value: 'document' | 'line') => {
+      search.value.displayMode = value
+    }
+  })
+  watch(displayMode, () => void onDisplayModeChange())
+  const displayModeOptions = useDictionaryOptions('commonDocumentDisplayMode')
   type PurchaseListRow = ScmPurchaseDocument & {
     detailRowId?: string
     detailLine?: ScmPurchaseLine
@@ -295,7 +296,13 @@
   })
 
   const searchItems = computed<SearchFormItem[]>(() => [
-    { label: '展示方式', key: 'displayMode', type: 'text' },
+    {
+      label: '展示方式',
+      key: 'displayMode',
+      type: 'radioGroup',
+      options: displayModeOptions,
+      props: { optionType: 'button', 'aria-label': '单据列表展示方式' }
+    },
     ...(isPlatformSuper.value && !effectiveTenantId.value
       ? [
           {
