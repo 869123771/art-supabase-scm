@@ -1,0 +1,1 @@
+import{Vi as e,Yi as t,pa as n}from"./sys-_OlGSsBw.js";import{t as r}from"./purchase-workspace-y_v6ZGU4.js";var i=t({name:`ScmPurchaseContract`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`purchase_contract`}))}});export{i as default};

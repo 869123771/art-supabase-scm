@@ -956,6 +956,7 @@ export interface ScmLoadingChoice {
   zoneName: string
   binName: string
   batchNo: string
+  packNo: string | null
 }
 
 export interface ScmOutboundStockBatch {
@@ -966,6 +967,8 @@ export interface ScmOutboundStockBatch {
   zoneName: string
   binName: string
   batchNo: string
+  packId: string | null
+  packNo: string | null
   availableQuantity: number
   serialManagementEnabled: boolean
   serials: Array<{ id: string; serialNo: string }>
@@ -979,7 +982,7 @@ export async function fetchScmOutboundStocks(
   let stockQuery = supabase
     .from('wms_inventory_batch')
     .select(
-      'id,material_id,warehouse_id,zone_id,bin_id,batch_no,quantity,project_id,construction_no,organization_id,warehouse:mdm_warehouse!wms_inventory_batch_warehouse_fk(warehouse_name),bin:mdm_warehouse_bin!wms_inventory_batch_bin_fk(bin_name),material:mdm_material!wms_inventory_batch_material_fk(serial_management_enabled)'
+      'id,material_id,warehouse_id,zone_id,bin_id,batch_no,pack_id,quantity,project_id,construction_no,organization_id,warehouse:mdm_warehouse!wms_inventory_batch_warehouse_fk(warehouse_name),bin:mdm_warehouse_bin!wms_inventory_batch_bin_fk(bin_name),pack:mes_work_order_pack(pack_no),material:mdm_material!wms_inventory_batch_material_fk(serial_management_enabled)'
     )
     .eq('tenant_id', tenantId)
     .eq('project_id', projectId)
@@ -1005,6 +1008,7 @@ export async function fetchScmOutboundStocks(
     zoneId: string | null
     binId: string | null
     batchNo: string
+    packId: string | null
     quantity: number
     projectId: string | null
     constructionNo: string | null
@@ -1012,6 +1016,7 @@ export async function fetchScmOutboundStocks(
     warehouse?: { warehouseName: string } | null
     bin?: { binName: string } | null
     material?: { serialManagementEnabled: boolean } | null
+    pack?: { packNo: string } | null
   }
   type ReservationRow = {
     batchId: string | null
@@ -1105,6 +1110,8 @@ export async function fetchScmOutboundStocks(
         zoneName: zones.get(stock.zoneId ?? '') ?? '',
         binName: stock.bin?.binName ?? '',
         batchNo: stock.batchNo,
+        packId: stock.packId,
+        packNo: stock.pack?.packNo ?? null,
         availableQuantity: Math.max(0, Number(stock.quantity) - reserved),
         serialManagementEnabled: Boolean(stock.material?.serialManagementEnabled),
         serials: serials.get(stock.id) ?? []
@@ -1198,7 +1205,8 @@ export async function fetchScmLoadingChoices(
           warehouseName: stock.warehouseName,
           zoneName: stock.zoneName,
           binName: stock.binName,
-          batchNo: stock.batchNo
+          batchNo: stock.batchNo,
+          packNo: stock.packNo
         })
       }
     }
@@ -1228,6 +1236,7 @@ export interface ScmLoadingOutboundRow {
   zoneName: string
   binName: string
   batchNo: string
+  packNo: string
   serialNos: string
   sourceDocumentNo: string
   sourceLineNo: number
@@ -1309,7 +1318,13 @@ export async function fetchScmLoadingOutboundRows(
   const batchIds = uniq(allocations.map((allocation) => allocation.batchId))
   const batches = new Map<
     string,
-    { warehouseName: string; zoneId: string | null; binName: string; batchNo: string }
+    {
+      warehouseName: string
+      zoneId: string | null
+      binName: string
+      batchNo: string
+      packNo: string
+    }
   >()
   for (let offset = 0; offset < batchIds.length; offset += 100) {
     const result = await responseHandle<
@@ -1317,6 +1332,7 @@ export async function fetchScmLoadingOutboundRows(
         id: string
         zoneId: string | null
         batchNo: string
+        pack?: { packNo: string } | null
         warehouse?: { warehouseName: string } | null
         bin?: { binName: string } | null
       }>
@@ -1325,7 +1341,7 @@ export async function fetchScmLoadingOutboundRows(
         supabase
           .from('wms_inventory_batch')
           .select(
-            'id,zone_id,batch_no,warehouse:mdm_warehouse!wms_inventory_batch_warehouse_fk(warehouse_name),bin:mdm_warehouse_bin!wms_inventory_batch_bin_fk(bin_name)'
+            'id,zone_id,batch_no,warehouse:mdm_warehouse!wms_inventory_batch_warehouse_fk(warehouse_name),bin:mdm_warehouse_bin!wms_inventory_batch_bin_fk(bin_name),pack:mes_work_order_pack(pack_no)'
           )
           .in('id', batchIds.slice(offset, offset + 100)),
       { breakReturn: true, showErrorMessage: true, errorMessage: '出库库位加载失败' }
@@ -1335,7 +1351,8 @@ export async function fetchScmLoadingOutboundRows(
         warehouseName: batch.warehouse?.warehouseName ?? '',
         zoneId: batch.zoneId,
         binName: batch.bin?.binName ?? '',
-        batchNo: batch.batchNo
+        batchNo: batch.batchNo,
+        packNo: batch.pack?.packNo ?? ''
       })
     }
   }
@@ -1435,6 +1452,7 @@ export async function fetchScmLoadingOutboundRows(
           ),
           binName: joinedLocations(usedBatches.map((batch) => batch.binName)),
           batchNo: joinedLocations(usedBatches.map((batch) => batch.batchNo)),
+          packNo: joinedLocations(usedBatches.map((batch) => batch.packNo)),
           serialNos: rowAllocations
             .flatMap((allocation) =>
               (allocation.serialIds ?? []).map((id) => serials.get(id) ?? '')

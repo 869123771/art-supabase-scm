@@ -362,6 +362,12 @@
           { prop: 'zoneName', label: '库区', minWidth: 110 },
           { prop: 'binName', label: '库位', minWidth: 110 },
           { prop: 'batchNo', label: '批次', minWidth: 120 },
+          {
+            prop: 'packNo',
+            label: '包号',
+            minWidth: 130,
+            formatter: (row: LoadingListRow) => row.packNo || '—'
+          },
           { prop: 'serialNos', label: '序列号', minWidth: 150, showOverflowTooltip: true },
           { prop: 'sourceDocumentNo', label: '来源单据', minWidth: 170 },
           { prop: 'sourceLineNo', label: '源行号', width: 95 }
@@ -504,6 +510,7 @@
     { prop: 'zoneName', label: '库区', minWidth: 100 },
     { prop: 'binName', label: '库位', minWidth: 100 },
     { prop: 'batchNo', label: '批次号', minWidth: 120 },
+    { prop: 'packNo', label: '包号', minWidth: 130, formatter: (row) => row.packNo || '—' },
     {
       prop: 'selectedSerialIds',
       label: '序列号',

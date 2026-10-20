@@ -839,6 +839,7 @@
     { prop: 'zoneName', label: '库区', minWidth: 110 },
     { prop: 'binName', label: '库位', minWidth: 110 },
     { prop: 'batchNo', label: '批次', minWidth: 110 },
+    { prop: 'packNo', label: '包号', minWidth: 130, formatter: (row) => row.packNo || '—' },
     { prop: 'line.sourceDocumentNo', label: '销售订单号', minWidth: 150 },
     { prop: 'line.sourceLineNo', label: '销单行号', width: 90 }
   ]
