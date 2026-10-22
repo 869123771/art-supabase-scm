@@ -1,6 +1,6 @@
 # 亿企工场 SCM · 供应链管理
 
-本仓是 [亿企工场](https://gitee.com/wangyanghub/art-supabase-pro) 的供应链管理（SCM）业务子仓，位于主仓的 `modules/art-supabase-scm`，通过 Git submodule 独立维护。
+本仓是 [亿企工场](https://gitee.com/art-si/art-supabase-pro) 的供应链管理（SCM）业务子仓，位于主仓的 `modules/art-supabase-scm`，通过 Git submodule 独立维护。
 
 ## 职责边界
 
@@ -86,7 +86,7 @@ SCM 负责供应链领域的业务页面、API、类型和规则。认证、租�
 2. 在主仓更新 `modules/art-supabase-scm` 的子模块指针。
 3. 主仓克隆时使用 `git clone --recurse-submodules`，已有工作区使用 `git submodule update --init --recursive`。
 
-远端仓库：[art-supabase-scm](https://gitee.com/wangyanghub/art-supabase-scm)。
+远端仓库：[art-supabase-scm](https://gitee.com/art-si/art-supabase-scm)。
 
 ### 发货通知、装车与出库（2026-10-09）
 

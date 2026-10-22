@@ -1,0 +1,1 @@
+import{Hi as e,Xi as t,ma as n}from"./sys-D9H71nye.js";import{t as r}from"./scm-document-workspace-kNE5HBJH.js";var i=t({name:`ScmLoading`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`loading`}))}});export{i as default};

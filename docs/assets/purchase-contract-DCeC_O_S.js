@@ -1,0 +1,1 @@
+import{Hi as e,Xi as t,ma as n}from"./sys-D9H71nye.js";import{t as r}from"./purchase-workspace-D-K5_X5c.js";var i=t({name:`ScmPurchaseContract`,__name:`index`,setup(t){return(t,i)=>(n(),e(r,{kind:`purchase_contract`,"prepayment-permission":`ScmPurchaseContract:Push`}))}});export{i as default};

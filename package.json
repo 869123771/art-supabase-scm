@@ -25,7 +25,7 @@
     "check": "pnpm boundary:audit && pnpm ui:audit && pnpm typecheck && pnpm lint && pnpm test:unit"
   },
   "dependencies": {
-    "art-supabase-pro": "https://gitee.com/wangyanghub/art-supabase-pro/repository/archive/8d28452440614838b6dfb4fc36dd5054b1db1c61.tar.gz"
+    "art-supabase-pro": "https://gitee.com/art-si/art-supabase-pro/repository/archive/8d28452440614838b6dfb4fc36dd5054b1db1c61.tar.gz"
   },
   "peerDependencies": {
     "dayjs": "^1.11.23",
@@ -61,7 +61,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://gitee.com/wangyanghub/art-supabase-scm.git"
+    "url": "https://gitee.com/art-si/art-supabase-scm.git"
   },
   "license": "MulanPSL-2.0"
 }

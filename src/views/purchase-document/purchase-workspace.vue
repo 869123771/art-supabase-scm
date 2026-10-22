@@ -47,6 +47,11 @@
       </ArtTableQuery>
       <PurchaseDialog ref="dialogRef" @success="handleSaved" />
       <PurchaseDetailDrawer ref="drawerRef" />
+      <SettlementDocumentDrawer
+        ref="prepaymentDrawerRef"
+        kind="application"
+        @success="handleSaved('edit')"
+      />
       <MasterDataDeleteGuard ref="deleteGuardRef" />
       <PurchaseBuyerDialog ref="buyerDialogRef" @success="handleSaved('edit')" />
       <PurchaseRequestPrintSheet ref="printSheetRef" />
@@ -63,6 +68,8 @@
 
 <script setup lang="tsx">
   import { useDictionaryOptions } from '@/hooks/core/useDictionaryOptions'
+  import { pushPayableSettlement } from '@/api/payable-settlement'
+  import SettlementDocumentDrawer from '@/components/business/payable-settlement-workspace/modules/settlement-document-drawer.vue'
   import { storeToRefs } from 'pinia'
   import { useUnitDisplayNames } from '@/hooks/core/useUnitDisplayNames'
   import dayjs from 'dayjs'
@@ -132,7 +139,8 @@
 
   defineOptions({ name: 'ScmPurchaseWorkspace' })
   const { loadUnitDisplayNames, unitDisplayName } = useUnitDisplayNames()
-  const props = defineProps<{ kind: ScmPurchaseKind }>()
+  const props = defineProps<{ kind: ScmPurchaseKind; prepaymentPermission?: string }>()
+  const prepaymentDrawerRef = ref<InstanceType<typeof SettlementDocumentDrawer>>()
   const visibleRows = ref<PurchaseListRow[]>([])
   const lineProperties = new Set([
     'detailLine.lineNo',
@@ -451,6 +459,26 @@
       props.kind
     )
       ? [
+          {
+            key: 'push-prepayment',
+            label: '下推预付款申请',
+            permission: props.prepaymentPermission,
+            icon: 'ri:secure-payment-line',
+            selectionRequired: true,
+            hidden:
+              !props.prepaymentPermission ||
+              !['purchase_contract', 'purchase_order'].includes(props.kind),
+            disabled: (ctx) =>
+              batchBusy.value ||
+              !hasAuth('FinancePayableApplication:Add') ||
+              !hasAuth('FinancePayableApplication:View') ||
+              uniqBy(ctx.selectedRows, 'id').length !== 1 ||
+              ctx.selectedRows.some(
+                (row) =>
+                  !['approved', 'effective', 'purchasing', 'completed'].includes(String(row.status))
+              ),
+            onClick: (ctx) => pushPrepayment(purchaseRows(ctx.selectedRows))
+          },
           {
             permission: config.value.permissions.Delete,
             key: 'batch-delete',
@@ -968,6 +996,28 @@
       tenantOptions: tenantOptions.value,
       effectiveTenantId: effectiveTenantId.value
     })
+  }
+  async function pushPrepayment(rows: PurchaseListRow[]): Promise<void> {
+    const source = uniqBy(rows, 'id')[0]
+    if (
+      !source ||
+      batchBusy.value ||
+      !props.prepaymentPermission ||
+      !hasAuth(props.prepaymentPermission) ||
+      !hasAuth('FinancePayableApplication:Add') ||
+      !hasAuth('FinancePayableApplication:View')
+    )
+      return
+    batchBusy.value = true
+    try {
+      const created = await pushPayableSettlement(source.id, 'application', 'purchase')
+      ElMessage.success(`已生成 ${created.documentNo}`)
+      await prepaymentDrawerRef.value?.open(created, hasAuth('FinancePayableApplication:Edit'))
+    } catch (error) {
+      notifyFriendlyError(error, '预付款申请未生成，请核对来源状态与剩余额度后重试')
+    } finally {
+      batchBusy.value = false
+    }
   }
   async function pushOrdersToReceipt(rows: PurchaseListRow[]): Promise<void> {
     if (!rows.length || !hasAuth('ScmPurchaseOrder:Push') || !hasAuth('ScmReceiptNotice:Add'))
